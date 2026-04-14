@@ -3,6 +3,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from app.core.config import get_settings
 from app.schemas.log_analyzer import AnalyzeDirectorySource, AnalyzeRequestV1, AnalyzeResponseV1
 from app.services.log_analyzer import (
     LocalLogAnalyzer,
@@ -49,6 +50,16 @@ def test_build_log_analyzer_switches_between_local_and_remote(monkeypatch) -> No
     local_analyzer = build_log_analyzer()
 
     assert isinstance(local_analyzer, LocalLogAnalyzer)
+
+
+def test_platform_config_defaults_to_remote_analyzer_when_env_is_unset(monkeypatch) -> None:
+    monkeypatch.delenv("ANALYZER_MODE", raising=False)
+
+    settings = get_settings()
+    analyzer = build_log_analyzer()
+
+    assert settings.analyzer_mode == "remote"
+    assert isinstance(analyzer, RemoteLogAnalyzer)
 
 
 def test_remote_log_analyzer_validates_versioned_response_contract() -> None:

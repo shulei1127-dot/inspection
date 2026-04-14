@@ -41,7 +41,7 @@ def get_settings() -> Settings:
         app_env=os.getenv("APP_ENV", "dev"),
         app_host=os.getenv("APP_HOST", "0.0.0.0"),
         app_port=int(os.getenv("APP_PORT", "8000")),
-        analyzer_mode=os.getenv("ANALYZER_MODE", "local").strip().lower(),
+        analyzer_mode=os.getenv("ANALYZER_MODE", "remote").strip().lower(),
         analyzer_base_url=os.getenv("ANALYZER_BASE_URL", "http://127.0.0.1:8090"),
         analyzer_timeout_seconds=float(os.getenv("ANALYZER_TIMEOUT_SECONDS", "30")),
         analyzer_retry_count=int(os.getenv("ANALYZER_RETRY_COUNT", "0")),

@@ -109,6 +109,7 @@ Log Analyzer Abstraction v1 MVP
 - kept the `enabled` extraction low-ambiguity and limited to the current stable inventory source so downstream `report_payload.json` and DOCX rendering can show a real enabled value without changing the unified-json contract
 - added a minimal multi-product integration skeleton with analyzer-side `product_type` recognition and centralized parser routing for `xray` and `unknown`
 - added a minimal platform-side template selection convention so report rendering no longer relies purely on a hard-coded single-template assumption, even though v1 still maps both known product types to the current default DOCX asset
+- switched the platform default analyzer mode from `local` to `remote` so the standalone `log-analyzer-service` is now the default runtime path, while `local` remains available as an explicit override for development and tests
 
 ## Pending
 
@@ -130,6 +131,7 @@ Log Analyzer Abstraction v1 MVP
 - broader service attribute coverage beyond the current minimal `enabled` extraction for one stable inventory source
 - second product parser implementation beyond the current `xray` plus `unknown` skeleton
 - real multi-template asset set beyond the current shared default DOCX mapping
+- further analyzer-decoupling cleanup beyond the new default-remote runtime switch
 
 ## Notes
 
@@ -160,3 +162,4 @@ Log Analyzer Abstraction v1 MVP
 - The current xray service inventory is intentionally narrow: it now carries one stable running service plus failed services, which is enough to stop `services[]` from being failed-only, but not yet enough to represent the full host service landscape.
 - Xray service metadata is now slightly richer because `minion-service-status.txt` can populate `services[].enabled`, but this is still intentionally a narrow v4 increment rather than a complete service inventory model.
 - The multi-product skeleton is now in place, but it is intentionally still a thin v1 seam: `xray` and `unknown` are the only supported `product_type` values, parser routing is centralized, and template mapping is still intentionally reusing the single current DOCX asset.
+- Platform runtime now defaults to `ANALYZER_MODE=remote`; the test suite explicitly pins `local` mode unless a test overrides it, so automated regression remains self-contained while the production-oriented default stays aligned with the decoupling direction.

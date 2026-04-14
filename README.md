@@ -77,7 +77,7 @@ If unset, task records are stored in `./tasks.sqlite3`.
 The upload flow now resolves log parsing through an internal analyzer abstraction:
 
 ```bash
-ANALYZER_MODE=local
+ANALYZER_MODE=remote
 ANALYZER_BASE_URL=http://127.0.0.1:8090
 ANALYZER_TIMEOUT_SECONDS=30
 ANALYZER_RETRY_COUNT=0
@@ -85,8 +85,14 @@ ANALYZER_RETRY_COUNT=0
 
 Current modes:
 
-- `local`: use the in-process analyzer implementation that wraps the existing parser
-- `remote`: call a future external analyzer service over HTTP
+- `remote`: default mode, call the standalone analyzer service over HTTP
+- `local`: explicit development/test override using the in-process analyzer implementation
+
+If you want the old single-process behavior locally, set:
+
+```bash
+ANALYZER_MODE=local
+```
 
 The standalone analyzer-service API boundary is documented in:
 
