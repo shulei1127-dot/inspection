@@ -8,11 +8,11 @@ from app.services.report_template_selector import (
 )
 
 
-def test_template_selector_resolves_xray_and_unknown_to_current_default_template() -> None:
+def test_template_selector_resolves_xray_and_unknown_to_current_product_templates() -> None:
     xray_template = resolve_report_template_path_for_product_type("xray")
     unknown_template = resolve_report_template_path_for_product_type("unknown")
 
-    assert xray_template == Path("templates/inspection_report.docx")
+    assert xray_template == Path("templates/xray_inspection_report.docx")
     assert unknown_template == Path("templates/inspection_report.docx")
 
 
@@ -61,7 +61,7 @@ def test_template_selector_reads_product_type_from_unified_json_file(tmp_path: P
 
     assert extract_product_type_from_unified_json(unified_json) == "xray"
     assert resolve_report_template_path_for_unified_json_file(unified_json_path) == Path(
-        "templates/inspection_report.docx"
+        "templates/xray_inspection_report.docx"
     )
 
 

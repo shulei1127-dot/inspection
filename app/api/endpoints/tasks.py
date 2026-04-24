@@ -15,6 +15,7 @@ from app.schemas.tasks import (
     TaskResultSuccessResponse,
 )
 from app.services.report_rendering_service import render_task_report
+from app.services.report_template_selector import resolve_report_template_path_for_unified_json_file
 from app.services.task_service import (
     TaskLookupError,
     TaskUploadError,
@@ -145,7 +146,10 @@ async def render_report(task_id: str) -> RenderReportSuccessResponse | JSONRespo
     return RenderReportSuccessResponse(
         data=RenderReportData(
             task_id=task_id,
-            template_path=settings.default_report_template_path.as_posix(),
+            template_path=resolve_report_template_path_for_unified_json_file(
+                settings.workdir_dir / task_id / "unified.json",
+                settings=settings,
+            ).as_posix(),
             report_payload_path=(
                 settings.workdir_dir / task_id / "report_payload.json"
             ).as_posix(),

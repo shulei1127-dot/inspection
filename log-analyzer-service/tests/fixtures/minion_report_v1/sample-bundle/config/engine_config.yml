@@ -1,0 +1,6 @@
+engine_id: "00000000000000000000000000000001"
+mgmt_installed: true
+engine_ip: 169.254.1.1
+mgmt_ip: 169.254.1.1
+mgmt_openvpn_ip: 169.254.1.1
+engine_openvpn_ip: 169.253.0.2

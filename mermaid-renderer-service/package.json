@@ -1,0 +1,15 @@
+{
+  "name": "mermaid-renderer-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Small HTTP renderer service that converts Mermaid source to PNG.",
+  "scripts": {
+    "start": "node app/main.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@mermaid-js/mermaid-cli": "11.12.0"
+  },
+  "devDependencies": {}
+}

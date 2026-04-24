@@ -67,6 +67,8 @@ class UnifiedJsonContainer(BaseModel):
     runtime: str | None = None
     ports: list[str] = Field(default_factory=list)
     restart_policy: str | None = None
+    cpu_percent: float | None = None
+    memory_percent: float | None = None
     notes: str | None = None
 
 

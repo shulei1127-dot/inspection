@@ -12,6 +12,7 @@ from app.schemas.report_payload import ReportPayloadV1
 from app.services.report_template_selector import (
     resolve_report_template_path_for_unified_json_file,
 )
+from app.services.xray_trend_service import maybe_run_xray_trend_enhancement
 
 
 class ReportRenderingError(Exception):
@@ -177,10 +178,38 @@ def maybe_render_report_from_payload_file(
             renderer=type(resolved_adapter).__name__,
         )
 
+    details: dict[str, str | int | float | bool | None] = {}
+    try:
+        xray_trend_artifacts = maybe_run_xray_trend_enhancement(
+            task_id,
+            base_report_docx_path=rendered_output_path,
+        )
+    except Exception as exc:  # pragma: no cover - non-blocking post-render guard
+        details["xray_trend_status"] = "skipped_after_error"
+        details["xray_trend_error"] = str(exc)
+    else:
+        if xray_trend_artifacts is not None:
+            details.update(
+                {
+                    "xray_trend_status": (
+                        "augmented"
+                        if xray_trend_artifacts.augmented_report_path is not None
+                        else "artifacts_only"
+                    ),
+                    "xray_trend_input_path": xray_trend_artifacts.trend_input_path,
+                    "xray_trend_assessment_path": xray_trend_artifacts.trend_assessment_path,
+                    "xray_trend_summary_path": xray_trend_artifacts.trend_summary_path,
+                    "xray_trend_resource_history_path": xray_trend_artifacts.resource_history_path,
+                    "xray_trend_chart_count": len(xray_trend_artifacts.chart_paths),
+                    "xray_trend_augmented_report_path": xray_trend_artifacts.augmented_report_path,
+                }
+            )
+
     return ReportRenderResult(
         attempted=True,
         success=True,
         output_path=rendered_output_path,
+        details=details,
         renderer=type(resolved_adapter).__name__,
     )
 

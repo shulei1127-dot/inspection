@@ -13,6 +13,10 @@ def test_homepage() -> None:
     assert response.headers["content-type"].startswith("text/html")
     assert "inspection-report-platform" in response.text
     assert 'href="/docs"' in response.text
+    assert 'href="/console"' in response.text
+    assert 'href="/xray"' in response.text
+    assert 'href="/waf"' in response.text
+    assert 'href="/waf-audits/ui"' in response.text
     assert 'href="/health"' in response.text
     assert 'href="/api/tasks"' in response.text
     assert "POST /api/tasks" in response.text

@@ -66,6 +66,71 @@ The running service also exposes a minimal homepage:
 http://127.0.0.1:8000/
 ```
 
+A lightweight platform console is available at:
+
+```bash
+http://127.0.0.1:8000/console
+```
+
+The console is a no-build, FastAPI-served static page that links the current
+modules together. It uses real entry points for implemented flows and marks
+module pages that are still pending as `页面待接入`.
+
+For xray report generation, a minimal built-in workbench is available at:
+
+```bash
+http://127.0.0.1:8000/xray
+```
+
+The page uploads an xray-compatible log archive through `POST /api/tasks`,
+shows the returned task summary, and can trigger `POST
+/api/tasks/{task_id}/render-report` before downloading the generated DOCX
+through `GET /api/tasks/{task_id}/report`.
+
+The xray report path now also has a minimal trend-integration seam:
+
+- if the task workdir contains a canonical `resource_history.csv`, the render
+  path writes xray trend artifacts under `workdir/{task_id}/trend/`
+- rendered chart images and the optional Mermaid state-graph image are written
+  under `outputs/{task_id}/trend/`
+- when chart images are available, the final xray `report.docx` is augmented in
+  place with a trend appendix
+- when history data is missing or has fewer than 2 points, the main DOCX render
+  still succeeds and the xray trend step degrades conservatively instead of
+  fabricating charts
+
+This seam is enabled by default through:
+
+```bash
+XRAY_TREND_ENHANCEMENT_ENABLED=true
+```
+
+It remains non-blocking for report generation.
+
+For the WAF preprocessing API flow, a minimal built-in workbench is available at:
+
+```bash
+http://127.0.0.1:8000/waf
+```
+
+The page uploads a WAF full-log archive, calls `POST /api/waf/preprocessing`,
+and exposes download links for the generated status-analysis markdown and
+preprocessing detail JSON. Trend/report enhancement remains available through
+the API, but it is no longer automatically triggered by this frontend page.
+
+For WAF report auditing, a minimal built-in workbench is available at:
+
+```bash
+http://127.0.0.1:8000/waf-audits/ui
+```
+
+The page uploads one manual inspection report DOCX and reuses an existing WAF
+`preprocessing_id` through `POST /api/waf-audits`. It shows claim / confirmed /
+conflict counts and links to task metadata, normalized claims, structured audit
+results, and the generated markdown audit opinion. The old direct `log_file`
+upload path is kept as a compatibility API path, but the browser flow no longer
+asks users to upload the full WAF log archive twice.
+
 Minimal local persistence now uses SQLite through Python's standard library:
 
 ```bash
@@ -107,6 +172,19 @@ The analyzer side now also includes a minimal `xray-collector v1` adapter that c
 recognize one real collector layout and normalize it into the existing canonical
 inputs before producing `unified-json/v1`.
 
+That same xray adapter now also supports the built-in `./minion collect` bundle
+shape (`minion_report.gz`) by recognizing its `info/config/logs` layout and
+extracting the first high-value fields from:
+
+- host summary
+- minion health
+- Docker info / ps / images
+- CPU / memory / disk summaries
+
+These values are surfaced through `unified.json.metadata` and then into the xray
+report appendix so the current xray DOCX template can render them without changing
+the platform main flow.
+
 The repository now also includes a minimal multi-product integration skeleton:
 
 - analyzer-side `product_type` recognition
@@ -120,8 +198,14 @@ Current v1 product routing:
 
 Current v1 template mapping:
 
-- `xray` -> `templates/inspection_report.docx`
+- `xray` -> `templates/xray_inspection_report.docx`
 - `unknown` -> `templates/inspection_report.docx`
+
+The xray path now uses a dedicated DOCX template derived from the provided
+inspection template. Fields that are not yet produced by the current logs stay
+blank or `-`, while the currently parsed xray host/service/container/issue data
+is rendered into that template through existing `report_payload.json` +
+Carbone flow.
 
 See:
 
@@ -255,6 +339,7 @@ Supported upload archive formats:
 - `.zip`
 - `.tar.gz`
 - `.tgz`
+- native xray `minion_report.gz`
 
 ## Carbone Runtime
 
@@ -359,6 +444,420 @@ Recommended archive layout after extraction:
 
 The current parser prefers these canonical v1 paths first and only keeps a
 narrow legacy fallback for older local fixtures.
+
+## Trend Enhancement Subchain
+
+The repository now also includes an independent trend-enhancement subchain for
+cleaned status-analysis markdown reports. This subchain is intentionally kept
+separate from `/api/tasks`, the xray main flow, and the `waf_audits` flow.
+
+Current phase-1 scope:
+
+- read one cleaned status-analysis `.md` report
+- build `trend_input.json`
+- build `trend_assessment.json`
+- build `trend_summary.md`
+- generate up to 3 PNG static charts for metrics with at least 2 history points
+- generate a Mermaid state graph source file for status / risk-direction explanation
+- optionally append a trend appendix to a provided base `docx` report and write
+  `augmented_report.docx`
+
+Current phase-1 boundaries:
+
+- no OCR
+- no LLM numeric prediction
+- no complex time-series model
+- no full report rewrite
+- single-point snapshots remain conservative and do not generate trend charts
+- Mermaid PNG rendering is optional and defaults to disabled unless explicitly configured
+
+Current round2 hardening highlights:
+
+- snapshot metric tables such as `指标 | 数值 | 状态` are recognized more reliably
+- event timeline tables such as `日期 | 事件 | 恢复方式` are recognized and folded into stability evidence
+- predictive or recommendation sections are ignored so the builder does not treat future-looking narrative as history
+- docx appendix text is generated directly from `trend_assessment.json` instead of rendering markdown
+- the offline script now inserts the repo root into `sys.path`, so it can run without manually setting `PYTHONPATH`
+
+Current round3 hardening highlights:
+
+- stability evidence is no longer treated as one flat total and now splits into:
+  - `restart_count`
+  - `panic_count`
+  - `abnormal_exit_count`
+  - `unclean_shutdown_count`
+- nearby events are grouped into lightweight fault chains so the stability section reads like an incident chain instead of a loose hit list
+- second-batch regression fixtures now cover:
+  - low-risk stability samples
+  - disk-judgeable samples
+  - noisy text without false event promotion
+- the markdown summary and optional DOCX appendix now surface event-split and fault-chain text directly from `trend_assessment.json`
+
+Current round4 adaptation highlights:
+
+- the trend input builder now adapts a real SafeLine / WAF report shape that uses:
+  - `> **采集时间**: ...`
+  - snapshot tables shaped like `指标 | 采集快照值 | 备注`
+  - local uptime tables shaped like `指标 | 值`
+  - incident tables that mix time, severity, component, and detail columns
+- single-point CPU / memory / disk snapshots are now extracted from this WAF report family, even when values are embedded in:
+  - `us + sy` CPU rows
+  - memory percentage remarks such as `84.6% 偏高-告警`
+  - disk rows such as `使用率 | ~11%`
+- `uptime` can now be extracted from section-local runtime tables instead of relying only on top-level metadata
+- stability noise filtering is tighter for this report family:
+  - recommendation bullets
+  - impact/explanation prose
+  - explicit negative statements such as `无 OOM / panic`
+  - numbered headings and ID cells no longer become fake event subjects
+- one real local WAF status-analysis markdown sample now replays through the trend subchain with:
+  - CPU / memory / disk snapshots extracted
+  - uptime extracted
+  - stability still conservatively marked `pressure_high`
+  - resource dimensions still remaining `unknown` when only one snapshot point exists
+
+Current Mermaid text v1 output:
+
+- `trend_state_graph.mmd` is generated from `trend_assessment.json`
+- the graph focuses on the current highest-risk metric so the visual summary does not dilute the main signal
+- the same Mermaid source is written to:
+  - `workdir/trd_*/trend_state_graph.mmd`
+  - `outputs/trd_*/trend_state_graph.mmd`
+- `trend_summary.md` embeds the Mermaid block with an explicit note that it is a state / risk-direction graph, not a precise numeric forecast chart
+- no Mermaid CLI, Node.js, Chromium, PNG rendering, or Word insertion is required for the text path
+
+Current optional Mermaid image rendering:
+
+- platform-side rendering is routed through `MERMAID_RENDERER_MODE`
+- supported modes:
+  - `disabled`: default, keep `.mmd` only
+  - `local_cli`: render through local `mmdc`
+  - `remote`: send only the Mermaid source string to a future renderer service and save returned PNG bytes
+- when rendering succeeds, `outputs/trd_*/trend_state_graph.png` is rendered from `outputs/trd_*/trend_state_graph.mmd`
+- when rendering is disabled, unavailable, times out, or fails, the trend run still succeeds and keeps the `.mmd` source
+- if a base DOCX is provided and Mermaid PNG rendering succeeds, the PNG is appended through the existing trend appendix image path
+- configuration:
+  - `MERMAID_RENDERER_MODE=disabled`
+  - `MERMAID_RENDERER_BASE_URL=http://127.0.0.1:8091`
+  - `MERMAID_RENDERER_TIMEOUT_SECONDS=30`
+  - `MERMAID_CLI_PATH=mmdc`
+  - `MERMAID_CLI_TIMEOUT_SECONDS=30`
+- Mermaid CLI installation is intentionally not managed by this Python project
+
+Recommended local development values:
+
+```env
+MERMAID_RENDERER_MODE=local_cli
+MERMAID_CLI_PATH=mmdc
+```
+
+Recommended future service deployment values:
+
+```env
+MERMAID_RENDERER_MODE=remote
+MERMAID_RENDERER_BASE_URL=http://mermaid-renderer-service:8091
+```
+
+## Mermaid Renderer Service
+
+The repository now includes a lightweight `mermaid-renderer-service/` subproject.
+It encapsulates Node.js, Mermaid CLI, Chromium, and fonts behind a small HTTP API
+so the Python platform does not need to install Mermaid CLI directly.
+
+Service API:
+
+- `GET /health`
+- `POST /render`
+
+`POST /render` accepts Mermaid source text only:
+
+```json
+{
+  "source": "flowchart LR\nA --> B",
+  "format": "png",
+  "theme": "default",
+  "background": "white"
+}
+```
+
+Successful responses return PNG bytes with:
+
+```text
+Content-Type: image/png
+Cache-Control: no-store
+```
+
+Run service tests:
+
+```bash
+cd mermaid-renderer-service
+npm test
+```
+
+Build the Docker image:
+
+```bash
+cd mermaid-renderer-service
+docker build -t mermaid-renderer-service:0.1.0 .
+```
+
+The Docker image pins Mermaid CLI through `package.json` and installs Chromium /
+CJK fonts inside the image so server deployment does not rely on host-level
+`mmdc` installation.
+
+Remote integration validation:
+
+```bash
+docker run --rm -p 8091:8091 mermaid-renderer-service:0.1.0
+
+curl http://127.0.0.1:8091/health
+
+MERMAID_RENDERER_MODE=remote \
+MERMAID_RENDERER_BASE_URL=http://127.0.0.1:8091 \
+.venv/bin/python scripts/run_trend_enhancement.py tests/fixtures/trend_reports/multi_point_status_analysis.md
+```
+
+Expected result:
+
+- `outputs/trd_*/trend_state_graph.mmd`
+- `outputs/trd_*/trend_state_graph.png`
+- normal metric charts such as `cpu_trend.png`
+
+If `8091` is already used locally, map a different host port, for example:
+
+```bash
+docker run --rm -p 8092:8091 mermaid-renderer-service:0.1.0
+MERMAID_RENDERER_BASE_URL=http://127.0.0.1:8092
+```
+
+For local demos and repeated report generation, prefer the helper scripts:
+
+```bash
+./scripts/start_mermaid_renderer.sh
+./scripts/verify_mermaid_renderer.sh --platform
+./scripts/stop_mermaid_renderer.sh
+```
+
+Default script convention:
+
+- container name: `mermaid-renderer-service`
+- image: `mermaid-renderer-service:0.1.0`
+- restart policy: `unless-stopped`
+- host port: `8092`
+- container port: `8091`
+
+The start script keeps the renderer running as a local service. Use this platform
+config while it is running:
+
+```env
+MERMAID_RENDERER_MODE=remote
+MERMAID_RENDERER_BASE_URL=http://127.0.0.1:8092
+```
+
+Run it locally with:
+
+```bash
+.venv/bin/python scripts/run_trend_enhancement.py path/to/status_analysis.md --docx path/to/base_report.docx
+```
+
+The command writes intermediate artifacts under `workdir/trd_*` and final chart /
+Mermaid / augmented DOCX outputs under `outputs/trd_*`.
+
+## Log Preprocessing Layer
+
+The repository now also includes a new offline-first preprocessing seam for
+SafeLine / WAF full-log directories:
+
+```text
+full-log directory
+  -> status_analysis_evidence.json
+  -> status_analysis_summary.json
+  -> 状态分析报告.md
+  -> existing trend-enhancement subchain
+```
+
+Current round1 scope:
+
+- one extracted SafeLine / WAF full-log directory as input
+- fixed recent-window filtering for the latest 30 days
+- selective scan is the default mode, so the full source directory is not copied
+  into `workdir/prep_*/source_logs`
+- full-copy debug mode is still available with `LOG_PREPROCESSING_COPY_SOURCE=true`
+- explicit reference-time precedence:
+  - extracted collection time
+  - collection epoch suffix in names such as `minion-command-collect-...-1765356785`
+  - caller-provided reference time
+  - current system time
+- stable markdown rendering that is intentionally friendly to the current
+  `trend_input_builder`
+
+Current round1 source priority is intentionally fixed:
+
+- CPU:
+  - `system/top.txt`
+  - `resources/resource_summary.txt`
+- memory:
+  - `system/free.txt`
+  - `resources/resource_summary.txt`
+  - `system/top.txt` as a narrow fallback for `MiB Mem` snapshots
+- disk:
+  - `system/df.txt`
+  - `resources/resource_summary.txt`
+- uptime:
+  - `system/uptime.txt`
+  - `system/top.txt` as a narrow fallback for `top - ... up ...`
+  - collection metadata fallback
+
+Run it locally with:
+
+```bash
+.venv/bin/python scripts/run_log_preprocessing.py path/to/full_log_directory
+```
+
+This command writes:
+
+- `workdir/prep_*/resources/resource_history.csv`
+- `workdir/prep_*/status_analysis_evidence.json`
+- `workdir/prep_*/status_analysis_summary.json`
+- `workdir/prep_*/status_analysis.md`
+
+In selective mode, `status_analysis_evidence.json` includes `scan_coverage`
+metadata with:
+
+- `coverage_level`: `full`, `partial`, or `minimal`
+- scanned files
+- skipped files
+- skipped/limited reasons
+
+`status_analysis_summary.json` also carries a short delivery-friendly scan
+summary:
+
+- `coverage_level`
+- `scan_limitations`
+- `major_skipped_sources`
+- `coverage_warnings`
+
+Current round2 content-quality improvements:
+
+- repeated same-component / same-time-window service errors are aggregated into
+  one event-chain style finding in `status_analysis_summary.json` and
+  `状态分析报告.md`
+- raw service evidence remains in `status_analysis_evidence.json`
+- disk extraction now accepts additional low-ambiguity df-like files such as
+  `system/disk.txt`, `system/filesystem.txt`, and `system/filesystems.txt`
+- disk remains `unknown` when only vague disk job logs or Docker block-I/O
+  counters are available
+
+Current round3 resource-history support:
+
+- explicit resource history files can populate `resource_time_series` in both
+  `status_analysis_evidence.json` and `status_analysis_summary.json`
+- supported v1 sources are intentionally narrow:
+  - `resources/resource_history.csv`
+  - `resources/resource_timeseries.csv`
+  - `resources/resource_history.txt`
+  - `system/resource_history.csv`
+  - `system/resource_history.txt`
+- supported columns can use English or Chinese labels for timestamp, CPU,
+  memory, and disk; values can be plain numbers or percentages
+- generated `状态分析报告.md` now includes a `资源历史样本` table that the existing
+  trend subchain can parse directly
+- dense or uneven resource history is normalized to one 12-hour point using
+  per-metric averages, so charts use a stable cadence instead of raw noisy rows
+- ambiguous app-internal counters are not treated as system CPU / memory / disk
+  history; if no explicit resource history source exists, trend output remains
+  conservative and may skip charts for single-point snapshots
+
+Current resource-history generator v1:
+
+- each preprocessing run materializes a canonical
+  `workdir/prep_*/resources/resource_history.csv`
+- when an explicit history source exists, the generated CSV is normalized to one
+  12-hour point using per-metric averages
+- when no explicit history source exists, the generator writes at most one
+  current snapshot point from low-ambiguity CPU / memory / disk sources
+- when no reliable resource source exists, the generator writes a header-only
+  CSV so downstream behavior remains explicit and conservative
+- the generator does not interpolate missing windows, synthesize future points,
+  or treat ambiguous application counters as host resource history
+- trend input building now collapses duplicate same-collection metric points
+  when a generated `resources/resource_history.csv` single point and a current
+  snapshot describe the same 12-hour bucket and value, so single snapshots do
+  not accidentally become fake two-point trends
+
+The current round1 regression also validates the direct handoff:
+
+```text
+full-log directory -> 状态分析报告.md -> trend_input.json -> trend_assessment.json
+```
+
+without manually rewriting the generated markdown.
+
+API readiness draft:
+
+- [waf_api_v1_draft.md](/Users/shulei/Downloads/AI/codex/inspection-report-platform/docs/waf_api_v1_draft.md)
+- `POST /api/waf/preprocessing` is now implemented as the first minimal API
+  wrapper around the offline preprocessing service
+- `POST /api/waf/trend-enhancements` is now implemented for the
+  `preprocessing_id` handoff path, with optional Word appendix augmentation
+- read/download endpoints are implemented for preprocessing metadata,
+  status-analysis markdown, trend metadata, trend-summary markdown, and optional
+  augmented DOCX report
+- `GET /waf` provides a minimal browser workbench over the preprocessing API flow only; trend/report enhancement stays as a separate API handoff for now
+
+Create a WAF preprocessing task through the API:
+
+```bash
+curl -X POST http://127.0.0.1:8011/api/waf/preprocessing \
+  -F "file=@path/to/waf-full-log.tar.gz"
+```
+
+The response includes:
+
+- `resource_history_csv_path`
+- `status_analysis_evidence_path`
+- `status_analysis_summary_path`
+- `status_analysis_md_path`
+
+Retrieve WAF preprocessing artifacts:
+
+```bash
+curl http://127.0.0.1:8011/api/waf/preprocessing/prep_20260418_120000_abcd1234
+curl -OJ http://127.0.0.1:8011/api/waf/preprocessing/prep_20260418_120000_abcd1234/status-analysis
+```
+
+Create a WAF trend-enhancement task from a preprocessing result:
+
+```bash
+curl -X POST http://127.0.0.1:8011/api/waf/trend-enhancements \
+  -F "preprocessing_id=prep_20260418_120000_abcd1234"
+```
+
+Optionally append the trend appendix into a Word report:
+
+```bash
+curl -X POST http://127.0.0.1:8011/api/waf/trend-enhancements \
+  -F "preprocessing_id=prep_20260418_120000_abcd1234" \
+  -F "base_report_docx=@path/to/base_report.docx"
+```
+
+The response includes:
+
+- `trend_input_path`
+- `trend_assessment_path`
+- `trend_summary_path`
+- `trend_state_graph_path`
+- `output_trend_state_graph_path`
+- `chart_paths`
+- optional `augmented_report_path`
+
+Retrieve WAF trend artifacts:
+
+```bash
+curl http://127.0.0.1:8011/api/waf/trend-enhancements/trd_20260418_120500_abcd1234
+curl -OJ http://127.0.0.1:8011/api/waf/trend-enhancements/trd_20260418_120500_abcd1234/summary
+curl -OJ http://127.0.0.1:8011/api/waf/trend-enhancements/trd_20260418_120500_abcd1234/augmented-report
+```
 
 ## Development Rules
 

@@ -31,6 +31,15 @@ class Settings:
     carbone_api_token: str | None
     carbone_api_timeout_seconds: float
     carbone_version: str
+    xray_trend_enhancement_enabled: bool
+    log_preprocessing_copy_source: bool
+    log_preprocessing_large_file_bytes: int
+    log_preprocessing_max_excerpt_lines: int
+    mermaid_renderer_mode: str
+    mermaid_renderer_base_url: str
+    mermaid_renderer_timeout_seconds: float
+    mermaid_cli_path: str
+    mermaid_cli_timeout_seconds: float
 
 
 def get_settings() -> Settings:
@@ -61,4 +70,13 @@ def get_settings() -> Settings:
         carbone_api_token=os.getenv("CARBONE_API_TOKEN") or None,
         carbone_api_timeout_seconds=float(os.getenv("CARBONE_API_TIMEOUT_SECONDS", "30")),
         carbone_version=os.getenv("CARBONE_VERSION", "5"),
+        xray_trend_enhancement_enabled=_get_bool_env("XRAY_TREND_ENHANCEMENT_ENABLED", True),
+        log_preprocessing_copy_source=_get_bool_env("LOG_PREPROCESSING_COPY_SOURCE", False),
+        log_preprocessing_large_file_bytes=int(os.getenv("LOG_PREPROCESSING_LARGE_FILE_BYTES", str(50 * 1024 * 1024))),
+        log_preprocessing_max_excerpt_lines=int(os.getenv("LOG_PREPROCESSING_MAX_EXCERPT_LINES", "200")),
+        mermaid_renderer_mode=os.getenv("MERMAID_RENDERER_MODE", "disabled").strip().lower(),
+        mermaid_renderer_base_url=os.getenv("MERMAID_RENDERER_BASE_URL", "http://127.0.0.1:8091"),
+        mermaid_renderer_timeout_seconds=float(os.getenv("MERMAID_RENDERER_TIMEOUT_SECONDS", "30")),
+        mermaid_cli_path=os.getenv("MERMAID_CLI_PATH", "mmdc"),
+        mermaid_cli_timeout_seconds=float(os.getenv("MERMAID_CLI_TIMEOUT_SECONDS", "30")),
     )

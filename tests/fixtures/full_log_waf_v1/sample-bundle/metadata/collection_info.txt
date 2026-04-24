@@ -1,0 +1,3 @@
+采集时间: 2026-04-16 12:54 CST
+hostname: waf-vm-01
+version: 23.01.004_r10

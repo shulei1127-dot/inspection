@@ -10,7 +10,7 @@ from app.schemas.unified_json import UnifiedJsonV1
 
 
 PRODUCT_TEMPLATE_FILENAMES = {
-    "xray": "inspection_report.docx",
+    "xray": "xray_inspection_report.docx",
     "unknown": "inspection_report.docx",
 }
 

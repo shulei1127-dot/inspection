@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.schemas.log_analyzer import AnalyzeResponseV1
 from app.schemas.report_payload import ReportPayloadV1
 from app.schemas.unified_json import UnifiedJsonV1
 from app.services.log_analyzer import LocalLogAnalyzer, LogAnalyzerError, RemoteLogAnalyzer
@@ -19,6 +20,14 @@ from app.services import task_service
 client = TestClient(app)
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "real_parser_v1"
 SPEC_V1_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "input_bundle_spec_v1"
+MINION_REPORT_FIXTURE_DIR = (
+    Path(__file__).resolve().parents[1]
+    / "log-analyzer-service"
+    / "tests"
+    / "fixtures"
+    / "minion_report_v1"
+    / "sample-bundle"
+)
 
 
 def test_get_task_returns_minimal_result_for_existing_task(
@@ -106,6 +115,91 @@ def test_create_task_accepts_tar_gz_archive_and_extracts_supported_files(
     assert unified_json.host_info.hostname == "tar-host"
     assert unified_json.summary.service_count == 1
     assert unified_json.summary.container_count == 1
+
+
+def test_create_task_accepts_native_minion_report_gz_and_generates_xray_report_payload(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ANALYZER_MODE", "remote")
+    monkeypatch.setenv("ANALYZER_BASE_URL", "http://127.0.0.1:8090")
+
+    captured_request: dict[str, object] = {}
+
+    def fake_send_request(self, request):  # noqa: ANN001
+        nonlocal captured_request
+        captured_request = request.model_dump(mode="json")
+        analysis_root = Path(request.source.path)
+        assert (analysis_root / "info").is_file()
+        assert (analysis_root / "config" / "mgmt_config.yml").is_file()
+        assert (analysis_root / "logs" / "minion.log").is_file()
+        return _build_minion_report_analyze_response(
+            task_id=request.task_id,
+            analysis_root=analysis_root,
+            archive_name=request.archive_name,
+            archive_size_bytes=request.archive_size_bytes,
+        )
+
+    monkeypatch.setattr(RemoteLogAnalyzer, "_send_request", fake_send_request)
+
+    response = client.post(
+        "/api/tasks",
+        files={
+            "file": (
+                "minion_report.gz",
+                _build_tar_gz_bytes_from_tree(MINION_REPORT_FIXTURE_DIR),
+                "application/gzip",
+            )
+        },
+        data={"parser_profile": "default", "report_lang": "zh-CN"},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    task_id = payload["data"]["task_id"]
+    task_row = _fetch_task_db_row(tmp_path, task_id)
+    unified_json = UnifiedJsonV1.model_validate_json(
+        (tmp_path / "workdir" / task_id / "unified.json").read_text(encoding="utf-8")
+    )
+    report_payload = ReportPayloadV1.model_validate_json(
+        (tmp_path / "workdir" / task_id / "report_payload.json").read_text(encoding="utf-8")
+    )
+
+    assert captured_request["archive_name"] == "minion_report.gz"
+    assert captured_request["source"]["type"] == "directory"
+    assert payload["data"]["filename"] == "minion_report.gz"
+    assert payload["data"]["stored_zip_path"] == f"uploads/{task_id}.gz"
+    assert payload["data"]["status"] == "completed"
+    assert payload["data"]["summary"] == {
+        "service_count": 8,
+        "container_count": 2,
+        "issue_count": 1,
+    }
+    assert task_row is not None
+    assert task_row["archive_path"] == f"uploads/{task_id}.gz"
+    assert (tmp_path / "uploads" / f"{task_id}.gz").exists()
+
+    assert unified_json.parser is not None
+    assert unified_json.parser.name == "xray-collector-parser"
+    assert unified_json.metadata["product_type"] == "xray"
+    assert unified_json.metadata["collector_type"] == "minion-report/v1"
+    assert unified_json.host_info.hostname == "shulei"
+    assert unified_json.summary.service_count == 8
+    assert unified_json.summary.container_count == 2
+    assert unified_json.summary.issue_count == 1
+
+    assert report_payload.host.hostname == "shulei"
+    assert report_payload.summary.issue_count == 1
+    assert report_payload.appendix["xray_product_version"] == "10-25.11.001_r15"
+    assert report_payload.appendix["xray_engine_version"] == "6.18.8_r12"
+    assert report_payload.appendix["xray_machine_id"] == "3bc0c6e9e964477f90dd8175e5e5f181"
+    assert report_payload.appendix["xray_mgmt_health_result"] == "正常"
+    assert report_payload.appendix["xray_engine_health_result"] == "告警"
+    assert "引擎节点健康检查告警" in str(report_payload.appendix["xray_result_conclusion"])
+    assert [row.id for row in report_payload.issue_rows] == [
+        "container-xray-redis-restarting",
+    ]
 
 
 def test_list_tasks_returns_multiple_items_in_latest_first_order(
@@ -1122,7 +1216,9 @@ def test_create_task_rejects_non_zip_file(tmp_path: Path, monkeypatch) -> None:
         "success": False,
         "error": {
             "code": "unsupported_media_type",
-            "message": "Only .zip, .tar.gz, and .tgz files are accepted.",
+            "message": (
+                "Only .zip, .tar.gz, .tgz, and the native xray minion_report.gz archive are accepted."
+            ),
             "details": {
                 "filename": "notes.txt",
             },
@@ -1168,6 +1264,16 @@ def _build_tar_gz_bytes(entries: dict[str, str]) -> bytes:
             tar_info = tarfile.TarInfo(name=name)
             tar_info.size = len(encoded)
             archive.addfile(tar_info, io.BytesIO(encoded))
+
+    return buffer.getvalue()
+
+
+def _build_tar_gz_bytes_from_tree(root_dir: Path) -> bytes:
+    buffer = io.BytesIO()
+
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for path in sorted(root_dir.rglob("*")):
+            archive.add(path, arcname=path.relative_to(root_dir).as_posix())
 
     return buffer.getvalue()
 
@@ -1274,6 +1380,210 @@ def _write_task_files(
 
     if include_report:
         (outputs_dir / "report.docx").write_bytes(_build_docx_bytes("Report content"))
+
+
+def _build_minion_report_analyze_response(
+    *,
+    task_id: str,
+    analysis_root: Path,
+    archive_name: str | None,
+    archive_size_bytes: int | None,
+) -> AnalyzeResponseV1:
+    return AnalyzeResponseV1.model_validate(
+        {
+            "response_version": "analyze-response/v1",
+            "schema_version": "unified-json/v1",
+            "product_type": "xray",
+            "analyzer_version": "0.1.0",
+            "analysis_started_at": "2026-04-15T09:20:00Z",
+            "analysis_finished_at": "2026-04-15T09:20:02Z",
+            "warnings": [
+                "minion-report/v1 input detected and normalized into canonical parser inputs.",
+            ],
+            "input_summary": {
+                "source_type": "directory",
+                "path": analysis_root.as_posix(),
+                "file_count": 12,
+                "directory_count": 7,
+            },
+            "result": {
+                "schema_version": "unified-json/v1",
+                "task_id": task_id,
+                "generated_at": "2026-04-15T09:20:02Z",
+                "source": {
+                    "archive_name": archive_name,
+                    "archive_size_bytes": archive_size_bytes,
+                    "collected_at": None,
+                },
+                "parser": {
+                    "name": "xray-collector-parser",
+                    "version": "0.1.0",
+                },
+                "host_info": {
+                    "hostname": "shulei",
+                    "ip": None,
+                    "os_name": "Ubuntu 22.04.5 LTS",
+                    "os_version": None,
+                    "kernel_version": "5.15.0-174-generic",
+                    "timezone": "UTC+08:00",
+                    "uptime_seconds": 4550,
+                    "last_boot_at": "2026-04-15T06:26:35Z",
+                },
+                "summary": {
+                    "overall_status": "warning",
+                    "service_count": 8,
+                    "service_running_count": 8,
+                    "container_count": 2,
+                    "container_running_count": 1,
+                    "issue_count": 1,
+                    "issue_by_severity": {
+                        "critical": 0,
+                        "high": 0,
+                        "medium": 1,
+                        "low": 0,
+                        "info": 0,
+                    },
+                },
+                "services": [
+                    {
+                        "name": "gccd",
+                        "status": "running",
+                        "display_name": "gccd",
+                        "enabled": None,
+                        "version": None,
+                        "listen_ports": [],
+                        "start_mode": "supervisord",
+                        "notes": "synthetic minion-report runtime inventory",
+                    },
+                    {
+                        "name": "haproxy-mgmt",
+                        "status": "running",
+                        "display_name": "haproxy-mgmt",
+                        "enabled": None,
+                        "version": None,
+                        "listen_ports": [],
+                        "start_mode": "supervisord",
+                        "notes": "synthetic minion-report runtime inventory",
+                    },
+                    {
+                        "name": "minion",
+                        "status": "running",
+                        "display_name": "minion",
+                        "enabled": None,
+                        "version": None,
+                        "listen_ports": [],
+                        "start_mode": "systemd",
+                        "notes": "synthetic minion-report runtime inventory",
+                    },
+                    {
+                        "name": "openvpn-client",
+                        "status": "running",
+                        "display_name": "openvpn-client",
+                        "enabled": None,
+                        "version": None,
+                        "listen_ports": [],
+                        "start_mode": "supervisord",
+                        "notes": "synthetic minion-report runtime inventory",
+                    },
+                    {
+                        "name": "openvpn-server-engine",
+                        "status": "running",
+                        "display_name": "openvpn-server-engine",
+                        "enabled": None,
+                        "version": None,
+                        "listen_ports": [],
+                        "start_mode": "supervisord",
+                        "notes": "synthetic minion-report runtime inventory",
+                    },
+                    {
+                        "name": "openvpn-server-mgmt",
+                        "status": "running",
+                        "display_name": "openvpn-server-mgmt",
+                        "enabled": None,
+                        "version": None,
+                        "listen_ports": [],
+                        "start_mode": "supervisord",
+                        "notes": "synthetic minion-report runtime inventory",
+                    },
+                    {
+                        "name": "reverse",
+                        "status": "running",
+                        "display_name": "reverse",
+                        "enabled": None,
+                        "version": None,
+                        "listen_ports": [],
+                        "start_mode": "supervisord",
+                        "notes": "synthetic minion-report runtime inventory",
+                    },
+                    {
+                        "name": "wengine",
+                        "status": "running",
+                        "display_name": "wengine",
+                        "enabled": None,
+                        "version": None,
+                        "listen_ports": [],
+                        "start_mode": "supervisord",
+                        "notes": "synthetic minion-report runtime inventory",
+                    },
+                ],
+                "containers": [
+                    {
+                        "name": "xray-nginx",
+                        "status": "running",
+                        "image": "xray/nginx:latest",
+                        "runtime": "docker",
+                        "ports": ["0.0.0.0:443->443/tcp"],
+                        "restart_policy": None,
+                        "notes": "docker status: Up 3 hours",
+                    },
+                    {
+                        "name": "xray-redis",
+                        "status": "failed",
+                        "image": "redis:7.2",
+                        "runtime": "docker",
+                        "ports": [],
+                        "restart_policy": None,
+                        "notes": "docker status: Restarting (1) 55 seconds ago",
+                    },
+                ],
+                "issues": [
+                    {
+                        "id": "container-xray-redis-restarting",
+                        "severity": "medium",
+                        "category": "container",
+                        "title": "Container xray-redis is restarting",
+                        "description": "docker status: Restarting (1) 55 seconds ago",
+                        "suggestion": "Inspect container logs and restart policy for xray-redis.",
+                        "related_object_type": "container",
+                        "related_object_name": "xray-redis",
+                    }
+                ],
+                "warnings": [
+                    "minion-report/v1 input detected and normalized into canonical parser inputs.",
+                ],
+                "metadata": {
+                    "extracted_file_count": 12,
+                    "extracted_directory_count": 7,
+                    "product_type": "xray",
+                    "collector_type": "minion-report/v1",
+                    "parser_route": "xray-collector-parser",
+                    "xray_product_version": "10-25.11.001_r15",
+                    "xray_engine_version": "6.18.8_r12",
+                    "xray_machine_id": "3bc0c6e9e964477f90dd8175e5e5f181",
+                    "xray_mgmt_health_result": "正常",
+                    "xray_mgmt_health_note": "检查通过 5 项",
+                    "xray_engine_health_result": "告警",
+                    "xray_engine_health_note": "失败项：ENGINE RPC",
+                    "xray_minion_log_result": "正常",
+                    "xray_minion_log_note": "MINION GRPC 检查通过。",
+                    "xray_mgmt_node_ip": "169.254.1.1",
+                    "xray_engine_node_ip": "169.253.0.2",
+                    "xray_mgmt_memory": "总量 15.6GB，已用 4.4GB (28.32%)，可用 10.7GB",
+                    "xray_mgmt_disk": "/，79.3GB (86.73%) / 96.4GB，/dev/dm-0 (ext4)",
+                },
+            },
+        }
+    )
 
 
 def _fetch_task_db_row(root_dir: Path, task_id: str) -> sqlite3.Row | None:

@@ -110,6 +110,158 @@ Log Analyzer Abstraction v1 MVP
 - added a minimal multi-product integration skeleton with analyzer-side `product_type` recognition and centralized parser routing for `xray` and `unknown`
 - added a minimal platform-side template selection convention so report rendering no longer relies purely on a hard-coded single-template assumption, even though v1 still maps both known product types to the current default DOCX asset
 - switched the platform default analyzer mode from `local` to `remote` so the standalone `log-analyzer-service` is now the default runtime path, while `local` remains available as an explicit override for development and tests
+- added an xray-specific DOCX template at `templates/xray_inspection_report.docx` derived from the provided inspection template and wired product-type-based template selection so xray reports no longer render through the generic MVP layout
+- added a small xray-specific appendix layer in `report_payload.json` so currently available xray host/service/container/issue data can fill the provided template while fields not yet collected remain blank or `-`
+- validated the provided xray log package against the adapted template and confirmed end-to-end generation of `unified.json`, `report_payload.json`, and a rendered DOCX that now follows the provided xray report structure
+- extended the analyzer-side xray adapter to recognize the built-in `./minion collect` bundle shape (`minion_report.gz`) through its `info/config/logs` layout while still reusing the existing xray product route
+- normalized `minion_report.gz` into the existing chain by materializing canonical host and Docker inputs where possible and surfacing richer xray-specific metadata for report appendix rendering
+- added first-batch extraction for xray report fields from `minion_report.gz`, including product version, engine version, machine id, mgmt/engine health summaries, minion RPC health, CPU summary, memory summary, and root-disk summary
+- validated the real `minion_report.gz` sample in remote analyzer mode and confirmed end-to-end generation of `unified.json` and `report_payload.json` with the new xray appendix fields populated
+- added a minimal runtime service inventory for `minion_report.gz` by combining `logs/minion.log` and selected supervisord logs, lifting `services[]` from `0` to a product-relevant running-service set without changing the platform main flow
+- added platform-side upload compatibility for the native xray `minion_report.gz` archive name so users no longer need to rename it to `.tar.gz` before `POST /api/tasks`
+- added a platform-side regression test that locks the native `minion_report.gz` upload path through extraction, analyzer handoff, `unified.json`, and `report_payload.json`
+- added analyzer-side recognition for the current custom xray helper-script bundle layout (`minion_collect.txt` + `docker_ps.txt` + `machine_id.txt`) as `collector_type = xray-custom-collect/v1`
+- normalized custom xray helper-script host, Docker, machine-id, vuln-db, and installer-version files into the existing xray parser route so generated reports use `product_type = xray` instead of falling back to the generic unknown report chain
+- refined the xray DOCX template follow-up layout by removing cover-page host/IP summary placeholders, adding a Chinese inspection date under the company name, removing manual-verification table rows, and renaming load rows to explicit CPU / memory usage fields
+- localized remaining xray report-level runtime issue titles and suggestions so container/service findings no longer surface English fallback recommendations in the delivered report
+- added xray trend integration round1 so the xray render chain can now build `trend_input.json`, `trend_assessment.json`, `trend_summary.md`, `trend_state_graph.mmd`, and optional trend images under task-scoped `workdir/{task_id}/trend/` and `outputs/{task_id}/trend/`
+- wired xray report rendering to non-blockingly reuse the existing trend forecaster, chart renderer, Mermaid renderer, and DOCX appendix augmenter when a canonical `resource_history.csv` is present
+- added a new isolated `waf_audits` phase-1 review chain for `雷池 WAF` that accepts one manual `docx` report plus one log bundle without changing `/api/tasks` or the existing xray flow
+- added phase-1 WAF review schemas for `report_claims.json`, `log_evidence.json`, and `audit_result.json`
+- added an analyzer-side `/waf-evidence` endpoint with a minimal rule-oriented WAF evidence extractor built on stable Linux bundle inputs plus narrow resource/log signal parsing
+- added platform-side phase-1 WAF review services for manual report parsing, claim normalization, rule-based audit review, markdown opinion rendering, and end-to-end task orchestration
+- added new `GET/POST /api/waf-audits...` endpoints for WAF review task creation, listing, detail lookup, claims lookup, structured audit-result lookup, and markdown opinion download
+- added focused tests for manual report parsing, WAF evidence extraction, audit-review verdicts, markdown opinion rendering, WAF endpoint flow, and xray regression isolation
+- added a new independent trend-enhancement subchain for cleaned status-analysis markdown reports without changing `/api/tasks`, the xray main flow, or `waf_audits`
+- added phase-1 trend contracts for `trend_input.json` and `trend_assessment.json`, including per-metric `confidence` and conservative `stable / pressure_high / deteriorating / unknown` output states
+- added a rule-driven `trend_input_builder` limited to cleaned status-analysis markdown input and existing in-text time points / events only, without backfilling missing history
+- added a rule-driven `trend_forecaster` for CPU / memory / disk / stability that keeps single-point low-risk snapshots conservative instead of forcing `stable`
+- added `trend_summary.md` rendering and a PNG chart renderer that only emits charts when at least 2 historical points are available for a metric
+- added an append-only DOCX trend augmenter that writes a fixed appendix from `trend_assessment.json` directly instead of relying on markdown rendering
+- added an offline `scripts/run_trend_enhancement.py` entrypoint plus focused tests for builder, forecaster, summary rendering, chart rendering, report augmentation, and end-to-end orchestration
+- completed trend enhancement round2 with one real cleaned status-analysis markdown acceptance pass, rule hardening for snapshot tables and event timelines, and reusable regression fixtures for multi-point, single-snapshot, missing-data, and noisy-text cases
+- refined trend summary and DOCX appendix wording so real-sample outputs stay conservative but read more naturally in delivery materials
+- completed trend enhancement round3 with explicit stability event splitting (`restart_count`, `panic_count`, `abnormal_exit_count`, `unclean_shutdown_count`) instead of one mixed event total
+- added lightweight fault-chain aggregation for nearby stability evidence so summaries and appendix text now describe grouped incident chains rather than loose repeated hits
+- added second-batch trend regression fixtures for low-risk stability and disk-judgeable samples while preserving noisy-text and single-point conservative behavior
+- completed trend enhancement round4 for the current SafeLine / WAF status-analysis markdown family by adapting:
+  - blockquote-style `采集时间`
+  - snapshot tables shaped like `指标 | 采集快照值 | 备注`
+  - section-local uptime tables shaped like `指标 | 值`
+  - mixed incident tables with time / severity / component / detail columns
+- improved round4 resource extraction so one real WAF sample now contributes single-point CPU / memory / disk snapshots and one uptime sample into `trend_input.json`
+- tightened round4 stability noise filtering so numbered headings, recommendation prose, impact text, and explicit negative statements such as `无 OOM / panic` no longer pollute event lists as easily
+- added a dedicated WAF-shape regression fixture and tests to lock snapshot extraction, uptime extraction, and basic subject sanitization for this report family
+- added trend Mermaid text v1 so each trend run now produces a highest-risk-focused state graph source at both `workdir/trd_*/trend_state_graph.mmd` and `outputs/trd_*/trend_state_graph.mmd`
+- embedded the Mermaid state graph in `trend_summary.md` with explicit wording that it is a state / risk-direction graph rather than a precise numeric forecast chart
+- added optional Mermaid image rendering v1 so local `mmdc` can turn `outputs/trd_*/trend_state_graph.mmd` into `outputs/trd_*/trend_state_graph.png`
+- added a platform-side `MermaidRenderer` abstraction with explicit `disabled`, `local_cli`, and `remote` modes so the future renderer service can be wired without changing trend business logic
+- changed the default Mermaid renderer mode to `disabled` for deployment safety, while preserving local CLI rendering as an explicit development mode
+- added a remote renderer client shape that sends only the Mermaid source string and saves returned `image/png` bytes, avoiding leakage of local filesystem paths to future renderer services
+- kept Mermaid rendering non-blocking: missing CLI, disabled rendering, timeout, or non-zero exit leaves the `.mmd` source intact and does not fail the trend run
+- wired successful Mermaid PNG rendering into the existing optional DOCX appendix image list when a base DOCX is provided, without making Node.js / Chromium a required dependency
+- added an independent `mermaid-renderer-service/` v1 subproject with Node.js HTTP endpoints `GET /health` and `POST /render`
+- implemented renderer-service v1 request support for Mermaid source plus optional `theme` and `background`, returning `image/png` with `Cache-Control: no-store`
+- added renderer-service structured errors with `request_id` for invalid requests, unsupported formats, render failures, timeouts, and internal errors
+- added a Dockerfile that encapsulates Node.js, pinned `@mermaid-js/mermaid-cli`, Chromium, and CJK fonts so production does not depend on host-level Mermaid CLI installation
+- added Node tests for renderer request validation, safe `mmdc` argument construction, successful PNG response, structured errors, and health metadata
+- validated `mermaid-renderer-service` remote integration by building `mermaid-renderer-service:0.1.0`, running it in Docker, verifying `GET /health`, verifying `POST /render` returns PNG with `Cache-Control: no-store`, and running the platform with `MERMAID_RENDERER_MODE=remote`
+- confirmed the platform remote trend run writes `outputs/trd_*/trend_state_graph.png` and still produces the normal CPU / memory / disk trend PNGs
+- confirmed that when a base DOCX is supplied, the generated Mermaid PNG is appended through the existing trend appendix image path; the test DOCX contained four appended images: CPU, memory, disk, and Mermaid state graph
+- recorded local renderer image runtime versions: Node.js `v20.20.1`, `@mermaid-js/mermaid-cli@11.12.0`, Chromium `147.0.7727.55 Alpine Linux`
+- added local service orchestration scripts for `mermaid-renderer-service`: `scripts/start_mermaid_renderer.sh`, `scripts/stop_mermaid_renderer.sh`, and `scripts/verify_mermaid_renderer.sh`
+- standardized local Mermaid renderer runtime as container `mermaid-renderer-service`, image `mermaid-renderer-service:0.1.0`, restart policy `unless-stopped`, and host port `8092` mapped to container port `8091`
+- validated the helper scripts end-to-end: renderer health, renderer PNG response, and platform remote trend run producing `outputs/trd_*/trend_state_graph.png`
+- added log preprocessing round1 as a new offline-first front layer for SafeLine / WAF full-log directories
+- added `status_analysis_evidence.json`, `status_analysis_summary.json`, and `状态分析报告.md` as explicit preprocessing artifacts before the existing trend-enhancement subchain
+- fixed round1 reference-time precedence to:
+  - extracted collection time
+  - caller-provided reference time
+  - current system time
+- extended the xray collector adapter to read the project-compatible v4 summary and version files, including `summary/xray_collection_summary.json`, `node-info/versions.txt`, `xray-logs/machineid.txt`, and `xray-logs/vuln-db-version.txt`
+- updated xray report payload date handling so report templates can prefer the actual log collection date and render it as a Chinese date instead of falling back to task generation time
+- backfilled the user-adjusted xray DOCX layout into `templates/xray_inspection_report.docx` with Carbone placeholders so future xray uploads render through the updated report style instead of the previous template
+- added minimal xray container resource fields (`cpu_percent` and `memory_percent`) from project-compatible v4 collector summaries into `unified.json`, `report_payload.json`, and the xray container detail table
+- aligned xray report resource semantics with the current single-node deployment assumption: unless explicit distributed engine resource fields are present, engine CPU / memory / disk now reuse the same host resource snapshot as the management node
+- corrected the xray node detail table template structure so management and engine sections use the intended three-column layout (`节点检查` / metric / detail) with `节点负载状态` spanning the CPU and memory rows
+- fixed round1 resource-source priority instead of leaving extraction order implicit:
+  - CPU from `system/top.txt` first
+  - memory from `system/free.txt` first, with a narrow `system/top.txt` fallback for `MiB Mem` snapshots
+  - disk from `system/df.txt` first
+  - uptime from `system/uptime.txt` first, with a narrow `system/top.txt` fallback
+- validated one real `minion-command-collect-...-1765356785` SafeLine / WAF full-log directory:
+  - collection time can be inferred from the directory epoch suffix when no metadata file exists
+  - current CPU, memory, and uptime snapshots are extracted from `system/top.txt`
+  - recent service findings can be carried into the generated status analysis markdown
+  - disk remains unknown when no `df` / resource summary source is present
+- added selective-scan preprocessing mode as the default so SafeLine / WAF full-log preprocessing no longer copies the whole source directory into `workdir/prep_*/source_logs`
+- kept full-copy debug mode available through `LOG_PREPROCESSING_COPY_SOURCE=true`
+- added scan coverage metadata to `status_analysis_evidence.json`, including `coverage_level`, scanned files, skipped files, and skip reasons
+- added summary-level scan limitations to `status_analysis_summary.json`, including `scan_limitations`, `major_skipped_sources`, and `coverage_warnings`
+- validated the real WAF sample in selective mode:
+  - expanded source directory remains about `1.9G`
+  - generated `workdir/prep_*` output is about `60K`
+  - no `source_logs/` copy is created
+  - CPU / memory / uptime extraction and trend assessment remain consistent with the previous full-copy validation
+- added WAF preprocessing round2 service-finding aggregation so repeated same-component / same-time-window errors are summarized as one event-chain style finding in `status_analysis_summary.json` and `状态分析报告.md`
+- kept source-near service evidence in `status_analysis_evidence.json` while using the aggregated view for delivery-facing summary output
+- added low-ambiguity df-like disk fallbacks such as `system/disk.txt`, `system/filesystem.txt`, and `system/filesystems.txt`
+- validated that the current real WAF sample still keeps disk `unknown` because it contains no supported disk-usage source; Docker `BLOCK I/O` and `UpdateDiskInfo` runtime logs are intentionally not used as disk-pressure evidence
+- validated that the real WAF sample now reduces 10 retained `mgt-es` query-failure evidence excerpts into one Elasticsearch query-failure event-chain finding without changing the conservative trend assessment result
+- added WAF preprocessing round3 resource time-series extraction from explicit low-ambiguity history files such as `resources/resource_history.csv`, `resources/resource_timeseries.csv`, and `system/resource_history.csv`
+- added `resource_time_series` to both `status_analysis_evidence.json` and `status_analysis_summary.json`, carrying timestamped CPU / memory / disk percentages when present
+- normalized extracted resource history into one 12-hour point using per-metric averages so dense or uneven rows can feed cleaner trend charts without interpolation
+- updated generated `状态分析报告.md` to include a `资源历史样本` table shaped for the existing trend subchain, so two or more resource points can become `trend_input.json` samples without manual markdown edits
+- kept resource-history extraction conservative: ambiguous app-internal counters such as Ripley mempool stats are not treated as system CPU / memory / disk history
+- added WAF `resource_history.csv` generator v1 so each preprocessing run now writes `workdir/prep_*/resources/resource_history.csv` as a stable canonical artifact before status-analysis rendering
+- normalized explicit resource-history inputs into 12-hour CSV points and added a snapshot-only fallback that emits at most one current CPU / memory / disk point when no explicit history exists
+- kept no-data resource-history behavior explicit by writing a header-only CSV instead of interpolating, backfilling, or fabricating trend points
+- added API-readiness prep for the WAF preprocessing / trend chain without exposing new endpoints yet
+- added `docs/waf_api_v1_draft.md` to document proposed future endpoints, request / response shapes, artifact paths, error envelopes, and v1 non-goals
+- completed WAF report resource recognition v2 by aligning CPU / memory / disk claim extraction with the current real report's three-column table structure, fixing `无异常值` misclassification, and allowing percentage-only rows to fall back to metric-specific thresholds when explicit normal/abnormal wording is absent
+- tightened trend sample de-duplication so a generated `resources/resource_history.csv` single point plus a same-bucket current snapshot no longer becomes a fake two-point trend
+- added `POST /api/waf/preprocessing` as the first minimal API wrapper around the offline WAF preprocessing chain
+- added WAF preprocessing API schemas and task service for archive upload validation, safe extraction, analysis-root resolution, status-analysis generation, and structured artifact-path responses
+- kept WAF trend-enhancement endpoints draft-only for now so the first API step is limited to `log archive -> resource_history.csv/status_analysis.*`
+- added `POST /api/waf/trend-enhancements` for the first API handoff from `preprocessing_id` to trend artifacts
+- added optional DOCX appendix augmentation to the WAF trend API path by accepting `base_report_docx` and returning `augmented_report_path` when generated
+- the first WAF trend API round intentionally kept read/download endpoints draft-only before the later artifact retrieval round
+- added WAF artifact read/download API v1 so generated outputs no longer require users to inspect local paths manually
+- added preprocessing artifact retrieval:
+  - `GET /api/waf/preprocessing/{preprocessing_id}`
+  - `GET /api/waf/preprocessing/{preprocessing_id}/status-analysis`
+- added trend artifact retrieval:
+  - `GET /api/waf/trend-enhancements/{trend_id}`
+  - `GET /api/waf/trend-enhancements/{trend_id}/summary`
+  - `GET /api/waf/trend-enhancements/{trend_id}/augmented-report`
+- kept artifact lookup strictly id-derived for `prep_*` and `trd_*` identifiers to avoid arbitrary filesystem reads
+- added `GET /waf` as a minimal browser workbench for the WAF preprocessing API flow:
+  - upload WAF full-log archive
+  - run preprocessing
+  - download status-analysis markdown and preprocessing detail JSON
+- added `GET /console` as a lightweight platform dashboard based on the Stitch design direction:
+  - no frontend build step
+  - no external CDN / font / icon dependency
+  - links WAF log preprocessing to `/waf`
+  - links WAF audit users to `/waf-audits/ui`
+  - avoids fake recent task data and keeps unchecked service health states marked as pending integration
+- restyled `/waf` to match the console design and later split it back to preprocessing-only because trend enhancement is not part of the current frontend operation flow
+- added `GET /xray` as a minimal browser workbench for the xray report-generation flow:
+  - upload xray-compatible log archive through `POST /api/tasks`
+  - display task id, status, service/container counts, and issue count
+  - expose task detail lookup through `GET /api/tasks/{task_id}`
+  - trigger optional Word rendering through `POST /api/tasks/{task_id}/render-report`
+  - download rendered DOCX through `GET /api/tasks/{task_id}/report`
+- updated `/console` so xray is now a real module entry instead of a Swagger-only placeholder
+- added `GET /waf-audits/ui` as a minimal browser workbench for the WAF report-audit flow:
+  - upload manual inspection report DOCX plus an existing WAF `preprocessing_id` through `POST /api/waf-audits`
+  - display task id, status, claim / confirmed count, and conflict count
+  - expose task metadata, normalized claims, structured audit result, and markdown audit opinion links
+- updated the WAF audit API/frontend so the default browser flow reuses `/waf` preprocessing results instead of asking users to upload the full WAF log archive a second time; the old direct `log_file` API path remains compatible for now
+- updated `/console` so WAF audit is now a real module entry instead of a Swagger-only placeholder
+- validated the round1 handoff chain on a SafeLine / WAF full-log fixture:
+  - `full-log directory -> 状态分析报告.md -> trend_input.json -> trend_assessment.json`
+  - no manual markdown rewrite required
 
 ## Pending
 
@@ -119,7 +271,7 @@ Log Analyzer Abstraction v1 MVP
 - deeper host time consistency diagnostics beyond basic impossible/future-value checks
 - product-line and device-specific multi-template system
 - AI analysis workflow
-- frontend
+- richer frontend beyond the minimal homepage, console, xray workbench, WAF trend workbench, and WAF audit workbench
 - richer persistence layer behavior beyond a single SQLite table
 - external standalone analyzer service implementation
 - standalone analyzer service implementation behind the new documented API boundary
@@ -131,7 +283,22 @@ Log Analyzer Abstraction v1 MVP
 - broader service attribute coverage beyond the current minimal `enabled` extraction for one stable inventory source
 - second product parser implementation beyond the current `xray` plus `unknown` skeleton
 - real multi-template asset set beyond the current shared default DOCX mapping
+- richer xray template field coverage beyond the current minimal appendix-backed substitution layer
 - further analyzer-decoupling cleanup beyond the new default-remote runtime switch
+- deeper `minion_report.gz` extraction beyond the current v1 `info + health + docker + resource` subset
+- richer `minion_report.gz` service metadata beyond the current runtime-only inventory
+- richer WAF claim extraction beyond the current conservative phase-1 keyword/table normalization
+- richer WAF evidence extraction beyond the current stable runtime/resource/log summary subset
+- optional WAF `audit_opinion.docx` rendering beyond the current phase-1 fixed `audit_opinion.md`
+- broader cleaned-report parsing coverage for trend enhancement beyond the current narrow markdown patterns and first-batch table/list formats
+- broader full-log preprocessing coverage beyond the current first SafeLine / WAF directory shapes and narrow source-priority set
+- richer large-file selective scanning beyond the current v1 `skip + coverage record` default
+- broader resource-history source support beyond the current explicit `resource_history` file family
+- richer trend heuristics beyond the current phase-1 weak prediction rules
+- CI or scripted smoke coverage for `mermaid-renderer-service` Docker build/run beyond the current local remote integration validation
+- optional API exposure for the trend-enhancement subchain after the offline contracts and artifacts stabilize
+- WAF artifact listing/history persistence beyond direct id-based lookup
+- broader stability-source parsing and smarter same-incident deduplication beyond the current lightweight fault-chain grouping
 
 ## Notes
 
@@ -149,9 +316,10 @@ Log Analyzer Abstraction v1 MVP
 - Input support is now documented and stabilized for v1, but parser coverage is still intentionally narrow and only covers the currently documented files.
 - Task history is now visible through `GET /api/tasks`, but the list is still intentionally minimal and has no pagination, filtering, or search yet.
 - Task cleanup now supports manual batch retention filters, but there is still no scheduled cleanup, soft delete, or restore mechanism.
-- The homepage is now available for a friendlier entry point, but it is intentionally only a small informational landing page rather than a real frontend.
+- The homepage is now available for a friendlier entry point, `/console` now provides a lightweight module dashboard, `/xray` provides a matching browser workbench over the xray upload/render/download path, `/waf` provides a matching browser workbench over the WAF preprocessing API only, and `/waf-audits/ui` provides a matching browser workbench over the WAF report-audit APIs; broader frontend navigation, task history, and polished UX remain deferred.
 - Upload support now covers `.zip`, `.tar.gz`, and `.tgz`, while the extracted input layout remains the same canonical v1 structure.
-- The platform now supports a local-vs-remote analyzer seam, but only the local implementation is used in production flow until a separate analyzer service is introduced.
+- Upload support now also includes the native xray `minion_report.gz` filename as a narrow compatibility path while still reusing the existing tar extraction flow.
+- Platform runtime now defaults to `ANALYZER_MODE=remote`, while tests explicitly pin `local` unless they are validating remote behavior.
 - Analyzer request modeling already uses a `source` object with directory mode so the future service boundary can expand without breaking the contract shape.
 - The new `log-analyzer-service/` subtree is intentionally only a scaffold and should not be mistaken for a finished standalone service implementation.
 - Remote analyzer verification is now scriptable for local regression and demo use and is also represented by a minimal CI smoke lane draft.
@@ -162,4 +330,22 @@ Log Analyzer Abstraction v1 MVP
 - The current xray service inventory is intentionally narrow: it now carries one stable running service plus failed services, which is enough to stop `services[]` from being failed-only, but not yet enough to represent the full host service landscape.
 - Xray service metadata is now slightly richer because `minion-service-status.txt` can populate `services[].enabled`, but this is still intentionally a narrow v4 increment rather than a complete service inventory model.
 - The multi-product skeleton is now in place, but it is intentionally still a thin v1 seam: `xray` and `unknown` are the only supported `product_type` values, parser routing is centralized, and template mapping is still intentionally reusing the single current DOCX asset.
+- Xray now has a dedicated adapted template, but the current approach is still intentionally conservative: it fills only data already present in current logs and leaves unsupported template fields blank rather than expanding parser scope just for visual completeness.
 - Platform runtime now defaults to `ANALYZER_MODE=remote`; the test suite explicitly pins `local` mode unless a test overrides it, so automated regression remains self-contained while the production-oriented default stays aligned with the decoupling direction.
+- `minion_report.gz` is now a viable direct xray input family, but v1 still intentionally avoids broad service inventory reconstruction or deeper app-specific diagnosis from that bundle.
+- `minion_report.gz` now also contributes a minimal runtime service inventory, but this remains intentionally narrow and does not yet infer full systemd coverage, enablement, or per-service versions.
+- Custom xray helper-script bundles are now recognized as xray inputs when the flat bundle contains `minion_collect.txt`, `docker_ps.txt`, and `machine_id.txt`; existing reports generated before this fix remain stale and should be regenerated from the same archive.
+- Xray report trend charts are not yet part of the xray upload/render chain. Current xray custom helper-script logs mainly provide a single current snapshot, while the existing trend chart / Mermaid image pipeline is still isolated in the WAF preprocessing / trend-enhancement path and needs a dedicated xray trend integration round before charts can be inserted automatically.
+- Xray trend integration round1 is now connected, but real chart value still depends on future xray-side multi-timepoint data. Without a canonical `resource_history.csv` (or equivalent future source), the xray trend step only emits conservative artifacts and does not fabricate history or forecast charts.
+- added `scripts/xray_collect_report_bundle_v2.sh` as a trend-ready collector variant: it preserves existing xray diagnostics, runs built-in `./minion collect`, captures machine-id and vulnerability DB metadata, and tries to export the last 30 days of sysstat/`sar` resource history into canonical `resources/resource_history.csv` with a 12-hour cadence plus `resources/resource_history_notes.txt`
+- added `scripts/xray_collect_report_bundle_v4_project.sh` as the current project-compatible xray collector: it defaults to `/data/x-ray`, supports layered install-directory detection, writes current analyzer-compatible inputs, and also emits report-oriented `summary/`, `node-info/`, `resource-usage/`, `container-status/`, and `container-history/` evidence for upcoming richer xray report mapping
+- the trend-enhancement subchain is intentionally offline-first in phase 1: it uses a standalone script and service orchestration instead of adding a new API endpoint before the contracts settle.
+- trend enhancement is intentionally conservative in phase 1: it only uses time points and restart / uptime events already present in the cleaned markdown report, does not synthesize missing history, and skips chart generation for single-point snapshots.
+- trend Mermaid image rendering is optional and intentionally external-runtime based; the Python workflow defaults to `disabled` and remains usable without Mermaid CLI or a remote renderer service.
+- the round2 real-sample pass shows the current builder is strongest on cleaned snapshot tables and explicit restart timelines, while same-incident aggregation across restart rows and nearby panic rows remains intentionally conservative and may still be refined in a later narrow iteration.
+- round3 now splits stability evidence into explicit event counters and grouped fault chains, but it is still intentionally a lightweight rule layer rather than a deep incident-correlation engine.
+- round4 improves compatibility with one real SafeLine / WAF report family, but the resource side still remains intentionally conservative: a single extracted snapshot can populate current values without forcing `stable` / `pressure_high` unless rule evidence is strong enough.
+- the new log preprocessing layer is intentionally still a round1 seam, not a universal log cleaner: it only targets one SafeLine / WAF directory family, keeps fixed source priorities, and stops at generating `状态分析报告.md` plus structured summary artifacts.
+- resource multi-timepoint extraction now exists with 12-hour bucketing and a canonical generated CSV artifact, but it still does not interpolate missing windows or synthesize future trend points from ambiguous application-internal counters.
+- WAF API exposure now covers preprocessing upload, trend enhancement from `preprocessing_id`, and direct id-based artifact retrieval/download; listing/history persistence is still deferred.
+- WAF audit rules now treat device/version information in the uploaded Word report as report-sourced metadata instead of requiring log proof; the default log-backed review focus is CPU, memory, and disk resource status, with device metadata no longer promoted into version audit claims.

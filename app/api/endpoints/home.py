@@ -75,12 +75,17 @@ def get_homepage() -> HTMLResponse:
               <p>Useful entry points:</p>
               <ul>
                 <li><a href="/docs">/docs</a> for interactive API testing</li>
+                <li><a href="/console">/console</a> for the platform module dashboard</li>
+                <li><a href="/xray">/xray</a> for the xray report generation workbench</li>
+                <li><a href="/waf">/waf</a> for the minimal WAF log preprocessing workbench</li>
+                <li><a href="/waf-audits/ui">/waf-audits/ui</a> for the WAF audit workbench</li>
                 <li><a href="/health">/health</a> for service health</li>
                 <li><a href="/api/tasks">/api/tasks</a> for task history</li>
                 <li><a href="/openapi.json">/openapi.json</a> for the OpenAPI document</li>
               </ul>
               <p style="margin-top: 18px;">
                 The main workflow starts from <code>POST /api/tasks</code>.
+                The WAF preprocessing workflow starts from <code>POST /api/waf/preprocessing</code>.
               </p>
             </section>
           </main>

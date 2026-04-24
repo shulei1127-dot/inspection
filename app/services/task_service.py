@@ -97,6 +97,13 @@ class TaskLookupError(Exception):
         )
 
 
+SUPPORTED_UPLOAD_ARCHIVE_MESSAGE = (
+    "Only .zip, .tar.gz, .tgz, and the native xray minion_report.gz archive are accepted."
+)
+NATIVE_XRAY_MINION_REPORT_FILENAME = "minion_report.gz"
+STORED_ARCHIVE_SUFFIXES = (".tar.gz", ".tgz", ".zip", ".gz")
+
+
 def create_task_from_upload(upload: UploadFile | None, options: TaskCreateOptions) -> TaskCreateData:
     if upload is None:
         raise TaskUploadError(
@@ -113,12 +120,12 @@ def create_task_from_upload(upload: UploadFile | None, options: TaskCreateOption
             message="No upload file was provided.",
         )
 
-    archive_suffix = _detect_archive_suffix(filename)
+    archive_suffix = _detect_upload_archive_suffix(filename)
     if archive_suffix is None:
         raise TaskUploadError(
             status_code=415,
             code="unsupported_media_type",
-            message="Only .zip, .tar.gz, and .tgz files are accepted.",
+            message=SUPPORTED_UPLOAD_ARCHIVE_MESSAGE,
             details={"filename": filename},
         )
 
@@ -801,9 +808,23 @@ def _deserialize_error_details(
     }
 
 
+def _detect_upload_archive_suffix(filename: str) -> str | None:
+    lowered_name = Path(filename).name.lower()
+    if lowered_name == NATIVE_XRAY_MINION_REPORT_FILENAME:
+        return ".gz"
+
+    for suffix in STORED_ARCHIVE_SUFFIXES:
+        if suffix == ".gz":
+            continue
+        if lowered_name.endswith(suffix):
+            return suffix
+
+    return None
+
+
 def _detect_archive_suffix(filename: str) -> str | None:
     lowered = filename.lower()
-    for suffix in (".tar.gz", ".tgz", ".zip"):
+    for suffix in STORED_ARCHIVE_SUFFIXES:
         if lowered.endswith(suffix):
             return suffix
     return None
@@ -822,7 +843,7 @@ def _task_id_from_archive_name(filename: str) -> str | None:
 
 
 def _find_fallback_archive_path(task_id: str, *, uploads_dir: Path) -> Path:
-    for suffix in (".zip", ".tar.gz", ".tgz"):
+    for suffix in (".zip", ".tar.gz", ".tgz", ".gz"):
         candidate = uploads_dir / f"{task_id}{suffix}"
         if candidate.exists():
             return candidate

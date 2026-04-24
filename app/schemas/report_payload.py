@@ -46,6 +46,8 @@ class ContainerRow(BaseModel):
     image: str
     status: str
     status_label: str
+    cpu_percent: str = "-"
+    memory_percent: str = "-"
     ports: str
     notes: str
 

@@ -23,6 +23,14 @@ Current accepted upload formats:
 - `.tar.gz`
 - `.tgz`
 
+Platform-side compatibility exception:
+
+- native xray `minion_report.gz`
+
+This exception exists so the platform can accept the built-in `./minion collect`
+archive name directly. The extracted content is still routed through the xray
+adapter rather than the canonical input-bundle parser.
+
 ## Recommended Extracted Layout
 
 After extraction, the archive should look like this:
