@@ -31,6 +31,10 @@ from app.schemas.status_analysis import (
     StatusAnalysisStabilityEvent,
     StatusAnalysisSummaryV1,
 )
+from app.schemas.waf_document_review import (
+    WafDocumentReviewInputV1,
+    WafDocumentReviewResultV1,
+)
 from app.schemas.waf_audits import (
     WafAuditCreateData,
     WafAuditError,
@@ -43,8 +47,14 @@ from app.services.manual_report_parser import ManualReportParseError, parse_manu
 from app.services.report_augmenter import (
     ReportAugmentError,
     augment_report_with_audit_appendix,
+    augment_report_with_document_review_appendix,
 )
 from app.services.report_claim_normalizer import normalize_report_claims
+from app.services.waf_document_review_service import (
+    build_waf_document_review_input,
+    generate_waf_document_review,
+    render_waf_document_review_markdown,
+)
 from app.services.waf_preprocessing_task_service import (
     WafPreprocessingTaskError,
     get_waf_preprocessing_result,
@@ -149,13 +159,13 @@ def create_waf_audit_from_upload(
     audit_result_path = task_workdir / "audit_result.json"
     audit_opinion_path = settings.outputs_dir / task_id / "audit_opinion.md"
     audit_augmented_report_path = settings.outputs_dir / task_id / "audit_augmented_report.docx"
-
     settings.uploads_dir.mkdir(parents=True, exist_ok=True)
     settings.outputs_dir.mkdir(parents=True, exist_ok=True)
     extracted_dir.mkdir(parents=True, exist_ok=True)
     create_waf_audit_task_record(
         task_id=task_id,
         status="parsing_report",
+        review_mode="log_grounded",
         report_upload_path=report_upload_path.as_posix(),
         log_archive_path=log_archive_path.as_posix(),
         workdir_path=task_workdir.as_posix(),
@@ -247,6 +257,7 @@ def create_waf_audit_from_upload(
     return WafAuditCreateData(
         task_id=task_id,
         status="completed",
+        review_mode="log_grounded",
         report_file_path=report_upload_path.as_posix(),
         log_file_path=log_archive_path.as_posix(),
         preprocessing_id=None,
@@ -299,13 +310,13 @@ def create_waf_audit_from_preprocessing(
     audit_result_path = task_workdir / "audit_result.json"
     audit_opinion_path = settings.outputs_dir / task_id / "audit_opinion.md"
     audit_augmented_report_path = settings.outputs_dir / task_id / "audit_augmented_report.docx"
-
     settings.uploads_dir.mkdir(parents=True, exist_ok=True)
     settings.outputs_dir.mkdir(parents=True, exist_ok=True)
     task_workdir.mkdir(parents=True, exist_ok=True)
     create_waf_audit_task_record(
         task_id=task_id,
         status="parsing_report",
+        review_mode="log_grounded",
         report_upload_path=report_upload_path.as_posix(),
         log_archive_path=None,
         preprocessing_id=preprocessing_result.preprocessing_id,
@@ -396,6 +407,7 @@ def create_waf_audit_from_preprocessing(
     return WafAuditCreateData(
         task_id=task_id,
         status="completed",
+        review_mode="log_grounded",
         report_file_path=report_upload_path.as_posix(),
         log_file_path=None,
         preprocessing_id=preprocessing_result.preprocessing_id,
@@ -404,6 +416,132 @@ def create_waf_audit_from_preprocessing(
         audit_result_path=audit_result_path.as_posix(),
         audit_opinion_path=audit_opinion_path.as_posix(),
         audit_augmented_report_path=audit_augmented_report_path.as_posix(),
+        summary=summary,
+    )
+
+
+def create_waf_document_only_review(
+    report_upload: UploadFile | None,
+    *,
+    report_lang: str = "zh-CN",
+) -> WafAuditCreateData:
+    del report_lang
+
+    if report_upload is None or not (report_upload.filename or ""):
+        raise WafAuditTaskError(
+            status_code=400,
+            code="missing_file",
+            message="No manual report file was provided.",
+        )
+
+    settings = get_settings()
+    task_id = _generate_waf_audit_task_id()
+    report_upload_path = settings.uploads_dir / f"{task_id}_report.docx"
+    task_workdir = settings.workdir_dir / task_id
+    report_claims_path = task_workdir / "report_claims.json"
+    document_review_input_path = task_workdir / "document_review_input.json"
+    llm_review_json_path = task_workdir / "document_review_result.json"
+    audit_opinion_path = settings.outputs_dir / task_id / "audit_opinion.md"
+    audit_augmented_report_path = settings.outputs_dir / task_id / "audit_augmented_report.docx"
+    settings.uploads_dir.mkdir(parents=True, exist_ok=True)
+    settings.outputs_dir.mkdir(parents=True, exist_ok=True)
+    task_workdir.mkdir(parents=True, exist_ok=True)
+    create_waf_audit_task_record(
+        task_id=task_id,
+        status="parsing_report",
+        review_mode="document_only",
+        report_upload_path=report_upload_path.as_posix(),
+        log_archive_path=None,
+        workdir_path=task_workdir.as_posix(),
+    )
+
+    try:
+        _save_upload(report_upload, report_upload_path)
+        _validate_docx_file(report_upload_path, report_upload.filename or "")
+
+        parsed_report = parse_manual_report(report_upload_path)
+        report_claims = normalize_report_claims(parsed_report, task_id=task_id)
+        _persist_model(report_claims, report_claims_path)
+
+        update_waf_audit_task_record(task_id, status="reviewing")
+        review_input = build_waf_document_review_input(report_claims)
+        _persist_model(review_input, document_review_input_path)
+
+        review_result = generate_waf_document_review(review_input)
+        _persist_model(review_result, llm_review_json_path)
+
+        audit_opinion_path.parent.mkdir(parents=True, exist_ok=True)
+        audit_opinion_path.write_text(
+            render_waf_document_review_markdown(review_result),
+            encoding="utf-8",
+        )
+        augment_report_with_document_review_appendix(
+            report_upload_path,
+            review_result=review_result,
+            output_path=audit_augmented_report_path,
+        )
+
+        update_waf_audit_task_record(
+            task_id,
+            status="completed",
+            audit_opinion_path=audit_opinion_path.as_posix(),
+            error_code=None,
+            error_message=None,
+            error_details=None,
+        )
+    except WafAuditTaskError as exc:
+        update_waf_audit_task_record(
+            task_id,
+            status="failed",
+            error_code=exc.code,
+            error_message=exc.message,
+            error_details=json.dumps(exc.details, ensure_ascii=False),
+        )
+        raise
+    except ManualReportParseError as exc:
+        update_waf_audit_task_record(
+            task_id,
+            status="failed",
+            error_code="report_parse_failed",
+            error_message=str(exc),
+            error_details=json.dumps({"task_id": task_id}, ensure_ascii=False),
+        )
+        raise WafAuditTaskError(
+            status_code=400,
+            code="report_parse_failed",
+            message=str(exc),
+            details={"task_id": task_id},
+        ) from exc
+    except ReportAugmentError as exc:
+        update_waf_audit_task_record(
+            task_id,
+            status="failed",
+            error_code="report_augment_failed",
+            error_message=str(exc),
+            error_details=json.dumps({"task_id": task_id}, ensure_ascii=False),
+        )
+        raise WafAuditTaskError(
+            status_code=500,
+            code="report_augment_failed",
+            message=str(exc),
+            details={"task_id": task_id},
+        ) from exc
+
+    summary = _summary_from_document_review_input(review_input)
+    return WafAuditCreateData(
+        task_id=task_id,
+        status="completed",
+        review_mode="document_only",
+        report_file_path=report_upload_path.as_posix(),
+        log_file_path=None,
+        preprocessing_id=None,
+        report_claims_path=report_claims_path.as_posix(),
+        log_evidence_path=None,
+        audit_result_path=None,
+        audit_opinion_path=audit_opinion_path.as_posix(),
+        audit_augmented_report_path=audit_augmented_report_path.as_posix(),
+        document_review_input_path=document_review_input_path.as_posix(),
+        llm_review_json_path=llm_review_json_path.as_posix(),
         summary=summary,
     )
 
@@ -450,6 +588,36 @@ def get_waf_audit_structured_result(task_id: str) -> AuditResultV1:
         ) from exc
 
 
+def get_waf_document_review_input(task_id: str) -> WafDocumentReviewInputV1:
+    paths = _resolve_paths(task_id)
+    try:
+        return WafDocumentReviewInputV1.model_validate_json(
+            paths["document_review_input_path"].read_text(encoding="utf-8")
+        )
+    except OSError as exc:
+        raise WafAuditLookupError(
+            status_code=404,
+            code="document_review_input_not_found",
+            message="Document review input artifact does not exist.",
+            details={"task_id": task_id},
+        ) from exc
+
+
+def get_waf_document_review_result(task_id: str) -> WafDocumentReviewResultV1:
+    paths = _resolve_paths(task_id)
+    try:
+        return WafDocumentReviewResultV1.model_validate_json(
+            paths["llm_review_json_path"].read_text(encoding="utf-8")
+        )
+    except OSError as exc:
+        raise WafAuditLookupError(
+            status_code=404,
+            code="document_review_result_not_found",
+            message="Document-only review result does not exist.",
+            details={"task_id": task_id},
+        ) from exc
+
+
 def get_waf_audit_opinion_path(task_id: str) -> Path:
     paths = _resolve_paths(task_id)
     if not paths["audit_opinion_path"].exists():
@@ -472,8 +640,6 @@ def get_waf_audit_augmented_report_path(task_id: str) -> Path:
             details={"task_id": task_id},
         )
     return paths["audit_augmented_report_path"]
-
-
 def extract_waf_log_evidence(
     *,
     task_id: str,
@@ -849,6 +1015,7 @@ def _record_to_result(record: WafAuditTaskRecord) -> WafAuditResultData:
     return WafAuditResultData(
         task_id=record.task_id,
         status=record.status,  # type: ignore[arg-type]
+        review_mode=record.review_mode,  # type: ignore[arg-type]
         created_at=record.created_at,
         report_file_path=paths["report_upload_path"].as_posix() if paths["report_upload_path"].exists() else None,
         log_file_path=paths["log_archive_path"].as_posix() if paths["log_archive_path"].exists() else None,
@@ -862,7 +1029,17 @@ def _record_to_result(record: WafAuditTaskRecord) -> WafAuditResultData:
             if paths["audit_augmented_report_path"].exists()
             else None
         ),
-        summary=_load_waf_audit_summary(paths["audit_result_path"]),
+        document_review_input_path=(
+            paths["document_review_input_path"].as_posix()
+            if paths["document_review_input_path"].exists()
+            else None
+        ),
+        llm_review_json_path=(
+            paths["llm_review_json_path"].as_posix()
+            if paths["llm_review_json_path"].exists()
+            else None
+        ),
+        summary=_load_waf_task_summary(record.review_mode, paths),
         error=(
             WafAuditError(
                 code=record.error_code or "failed",
@@ -873,6 +1050,15 @@ def _record_to_result(record: WafAuditTaskRecord) -> WafAuditResultData:
             else None
         ),
     )
+
+
+def _load_waf_task_summary(review_mode: str, paths: dict[str, Path]) -> WafAuditSummary:
+    if review_mode == "document_only":
+        return _load_waf_document_review_summary(
+            report_claims_path=paths["report_claims_path"],
+            document_review_input_path=paths["document_review_input_path"],
+        )
+    return _load_waf_audit_summary(paths["audit_result_path"])
 
 
 def _load_waf_audit_summary(audit_result_path: Path) -> WafAuditSummary:
@@ -890,6 +1076,39 @@ def _summary_from_audit_result(audit_result: AuditResultV1) -> WafAuditSummary:
         claim_count=len(audit_result.claim_results),
         confirmed_count=audit_result.summary.confirmed_count,
         conflict_count=audit_result.summary.conflict_count,
+    )
+
+
+def _load_waf_document_review_summary(
+    *,
+    report_claims_path: Path,
+    document_review_input_path: Path,
+) -> WafAuditSummary:
+    claim_count = 0
+    if report_claims_path.exists():
+        try:
+            report_claims = ReportClaimsV1.model_validate_json(report_claims_path.read_text(encoding="utf-8"))
+        except (OSError, JSONDecodeError, ValidationError):
+            claim_count = 0
+        else:
+            claim_count = len(report_claims.claims)
+    if document_review_input_path.exists():
+        try:
+            review_input = WafDocumentReviewInputV1.model_validate_json(
+                document_review_input_path.read_text(encoding="utf-8")
+            )
+        except (OSError, JSONDecodeError, ValidationError):
+            pass
+        else:
+            claim_count = max(claim_count, len(review_input.abnormal_topics))
+    return WafAuditSummary(claim_count=claim_count, confirmed_count=0, conflict_count=0)
+
+
+def _summary_from_document_review_input(review_input: WafDocumentReviewInputV1) -> WafAuditSummary:
+    return WafAuditSummary(
+        claim_count=len(review_input.abnormal_topics),
+        confirmed_count=0,
+        conflict_count=0,
     )
 
 
@@ -911,6 +1130,8 @@ def _resolve_paths(
         "report_claims_path": workdir_path / "report_claims.json",
         "log_evidence_path": workdir_path / "log_evidence.json",
         "audit_result_path": workdir_path / "audit_result.json",
+        "document_review_input_path": workdir_path / "document_review_input.json",
+        "llm_review_json_path": workdir_path / "document_review_result.json",
         "audit_opinion_path": audit_opinion_path,
         "audit_augmented_report_path": audit_augmented_report_path,
     }

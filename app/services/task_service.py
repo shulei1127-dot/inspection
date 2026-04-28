@@ -37,6 +37,7 @@ from app.services.report_rendering_service import (
 from app.services.report_template_selector import (
     resolve_report_template_path_for_unified_json,
 )
+from app.services.xray_llm_section_service import maybe_apply_xray_llm_sections
 from app.services.task_repository import (
     TaskRecord,
     create_task_record,
@@ -169,6 +170,10 @@ def create_task_from_upload(upload: UploadFile | None, options: TaskCreateOption
         report_payload = map_unified_json_to_report_payload(
             unified_json,
             report_lang=options.report_lang,
+        )
+        maybe_apply_xray_llm_sections(
+            report_payload,
+            unified_json=unified_json,
         )
         persist_report_payload(report_payload, report_payload_path)
         update_task_record(

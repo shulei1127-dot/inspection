@@ -258,6 +258,16 @@ Log Analyzer Abstraction v1 MVP
   - display task id, status, claim / confirmed count, and conflict count
   - expose task metadata, normalized claims, structured audit result, and markdown audit opinion links
 - updated the WAF audit API/frontend so the default browser flow reuses `/waf` preprocessing results instead of asking users to upload the full WAF log archive a second time; the old direct `log_file` API path remains compatible for now
+- added WAF `document_only` review round1 so a manual inspection DOCX can now be reviewed without full-log preprocessing through `POST /api/waf-audits/document-only`
+- added document-only WAF review artifacts:
+  - `document_review_input.json`
+  - `document_review_result.json`
+  - markdown `audit_opinion.md`
+  - DOCX appendix `audit_augmented_report.docx`
+- kept document-only wording evidence-safe by explicitly treating it as `根据巡检文档内容` instead of log-grounded verification
+- added a minimal local WAF help-doc grounding layer under `docs/help_docs/waf/` for resource alerts, container abnormalities, service failures, and document-only review guidance
+- added document-only WAF structured retrieval endpoints for `document-review-input` and `document-review`
+- kept the existing `preprocessing_id`-based WAF strong-audit path unchanged while reusing the same task detail/list/download surfaces
 - updated `/console` so WAF audit is now a real module entry instead of a Swagger-only placeholder
 - validated the round1 handoff chain on a SafeLine / WAF full-log fixture:
   - `full-log directory -> 状态分析报告.md -> trend_input.json -> trend_assessment.json`
@@ -339,6 +349,8 @@ Log Analyzer Abstraction v1 MVP
 - Xray trend integration round1 is now connected, but real chart value still depends on future xray-side multi-timepoint data. Without a canonical `resource_history.csv` (or equivalent future source), the xray trend step only emits conservative artifacts and does not fabricate history or forecast charts.
 - added `scripts/xray_collect_report_bundle_v2.sh` as a trend-ready collector variant: it preserves existing xray diagnostics, runs built-in `./minion collect`, captures machine-id and vulnerability DB metadata, and tries to export the last 30 days of sysstat/`sar` resource history into canonical `resources/resource_history.csv` with a 12-hour cadence plus `resources/resource_history_notes.txt`
 - added `scripts/xray_collect_report_bundle_v4_project.sh` as the current project-compatible xray collector: it defaults to `/data/x-ray`, supports layered install-directory detection, writes current analyzer-compatible inputs, and also emits report-oriented `summary/`, `node-info/`, `resource-usage/`, `container-status/`, and `container-history/` evidence for upcoming richer xray report mapping
+- tightened xray report payload resource alerts so CPU >= 80%, memory >= 85%, and disk >= 85% now surface as explicit xray observations and are ordered ahead of lower-value runtime warnings in the generated report
+- added an xray-only optional LLM section-generation seam that keeps fact tables rule-based while allowing remote-model generation of exception summary text, top exception/action items, and the final inspection summary before DOCX rendering
 - the trend-enhancement subchain is intentionally offline-first in phase 1: it uses a standalone script and service orchestration instead of adding a new API endpoint before the contracts settle.
 - trend enhancement is intentionally conservative in phase 1: it only uses time points and restart / uptime events already present in the cleaned markdown report, does not synthesize missing history, and skips chart generation for single-point snapshots.
 - trend Mermaid image rendering is optional and intentionally external-runtime based; the Python workflow defaults to `disabled` and remains usable without Mermaid CLI or a remote renderer service.
@@ -349,3 +361,5 @@ Log Analyzer Abstraction v1 MVP
 - resource multi-timepoint extraction now exists with 12-hour bucketing and a canonical generated CSV artifact, but it still does not interpolate missing windows or synthesize future trend points from ambiguous application-internal counters.
 - WAF API exposure now covers preprocessing upload, trend enhancement from `preprocessing_id`, and direct id-based artifact retrieval/download; listing/history persistence is still deferred.
 - WAF audit rules now treat device/version information in the uploaded Word report as report-sourced metadata instead of requiring log proof; the default log-backed review focus is CPU, memory, and disk resource status, with device metadata no longer promoted into version audit claims.
+- WAF report resource recognition v2 now follows the current real report's three-column table shape, correctly treats phrases such as `无异常值` as normal instead of abnormal, and can fall back to percentage thresholds when the document gives a concrete resource value but omits explicit `正常/异常` wording.
+- local development startup is now less manual: the config layer reads `.env` automatically as a fallback source, while keeping explicit shell environment variables at the highest priority and leaving hard-coded defaults as the final fallback.

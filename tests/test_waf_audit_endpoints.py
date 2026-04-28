@@ -197,6 +197,67 @@ def test_waf_audit_endpoint_rejects_invalid_preprocessing_id(
     assert response.json()["error"]["code"] == "invalid_preprocessing_id"
 
 
+def test_waf_document_only_endpoint_generates_review_artifacts(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("UPLOADS_DIR", (tmp_path / "uploads").as_posix())
+    monkeypatch.setenv("WORKDIR_DIR", (tmp_path / "workdir").as_posix())
+    monkeypatch.setenv("OUTPUTS_DIR", (tmp_path / "outputs").as_posix())
+    monkeypatch.setenv("TASKS_DB_PATH", (tmp_path / "tasks.sqlite3").as_posix())
+
+    response = client.post(
+        "/api/waf-audits/document-only",
+        files={
+            "report_file": (
+                "report.docx",
+                _build_document_only_docx_bytes(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+        },
+        data={"report_lang": "zh-CN"},
+    )
+
+    assert response.status_code == 201
+    data = response.json()["data"]
+    task_id = data["task_id"]
+    assert data["review_mode"] == "document_only"
+    assert data["log_evidence_path"] is None
+    assert data["audit_result_path"] is None
+    assert Path(data["document_review_input_path"]).exists()
+    assert Path(data["llm_review_json_path"]).exists()
+    assert Path(data["audit_opinion_path"]).exists()
+    assert Path(data["audit_augmented_report_path"]).exists()
+
+    detail_response = client.get(f"/api/waf-audits/{task_id}")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["data"]["review_mode"] == "document_only"
+
+    review_input_response = client.get(f"/api/waf-audits/{task_id}/document-review-input")
+    assert review_input_response.status_code == 200
+    assert review_input_response.json()["review_mode"] == "document_only"
+    assert review_input_response.json()["abnormal_topics"]
+
+    review_result_response = client.get(f"/api/waf-audits/{task_id}/document-review")
+    assert review_result_response.status_code == 200
+    assert review_result_response.json()["review_mode"] == "document_only"
+    assert "未结合原始日志做一致性核验" in review_result_response.json()["disclaimer"]
+
+    opinion_response = client.get(f"/api/waf-audits/{task_id}/audit-opinion")
+    assert opinion_response.status_code == 200
+    assert "雷池 WAF 文档直审意见" in opinion_response.text
+    assert "异常情况及处置操作" in opinion_response.text
+    assert "经日志核验" not in opinion_response.text
+
+    augmented_response = client.get(f"/api/waf-audits/{task_id}/augmented-report")
+    assert augmented_response.status_code == 200
+    with ZipFile(BytesIO(augmented_response.content)) as archive:
+        document_xml = archive.read("word/document.xml").decode("utf-8")
+    assert "附录：文档直审意见" in document_xml
+    assert "未结合原始日志做一致性核验" in document_xml
+
+
 def _build_docx_bytes() -> bytes:
     paragraphs = [
         "一、部署信息",
@@ -268,6 +329,46 @@ def _build_log_zip_bytes() -> bytes:
         )
         archive.writestr("resources/resource_summary", "memory=88%\n")
         archive.writestr("logs/app.log", "redis restarting\n")
+    return buffer.getvalue()
+
+
+def _build_document_only_docx_bytes() -> bytes:
+    paragraphs = [
+        "一、巡检发现",
+        "内存使用率达到87%，建议关注。",
+        "xray-web容器服务异常，容器不健康。",
+        "二、巡检结论",
+        "当前系统存在异常，需要进一步处理。",
+    ]
+    body_items = []
+    for paragraph in paragraphs:
+        body_items.append(f"<w:p><w:r><w:t>{_xml_escape(paragraph)}</w:t></w:r></w:p>")
+
+    document_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    {''.join(body_items)}
+    <w:sectPr/>
+  </w:body>
+</w:document>
+"""
+    content_types_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>
+"""
+    rels_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>
+"""
+    buffer = BytesIO()
+    with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", content_types_xml)
+        archive.writestr("_rels/.rels", rels_xml)
+        archive.writestr("word/document.xml", document_xml)
     return buffer.getvalue()
 
 

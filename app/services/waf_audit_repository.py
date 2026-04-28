@@ -9,6 +9,7 @@ from app.core.config import get_settings
 class WafAuditTaskRecord:
     task_id: str
     status: str
+    review_mode: str
     created_at: str
     updated_at: str
     report_upload_path: str | None
@@ -25,6 +26,7 @@ def create_waf_audit_task_record(
     *,
     task_id: str,
     status: str,
+    review_mode: str,
     report_upload_path: str | None,
     log_archive_path: str | None,
     workdir_path: str | None,
@@ -41,6 +43,7 @@ def create_waf_audit_task_record(
             INSERT INTO waf_audit_tasks (
                 task_id,
                 status,
+                review_mode,
                 created_at,
                 updated_at,
                 report_upload_path,
@@ -52,11 +55,12 @@ def create_waf_audit_task_record(
                 error_message,
                 error_details
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
                 status,
+                review_mode,
                 timestamp,
                 timestamp,
                 report_upload_path,
@@ -98,6 +102,7 @@ def get_waf_audit_task_record(task_id: str) -> WafAuditTaskRecord | None:
             SELECT
                 task_id,
                 status,
+                review_mode,
                 created_at,
                 updated_at,
                 report_upload_path,
@@ -126,6 +131,7 @@ def list_waf_audit_task_records() -> list[WafAuditTaskRecord]:
             SELECT
                 task_id,
                 status,
+                review_mode,
                 created_at,
                 updated_at,
                 report_upload_path,
@@ -153,6 +159,7 @@ def _connect() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS waf_audit_tasks (
             task_id TEXT PRIMARY KEY,
             status TEXT NOT NULL,
+            review_mode TEXT NOT NULL DEFAULT 'log_grounded',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             report_upload_path TEXT,
@@ -167,6 +174,7 @@ def _connect() -> sqlite3.Connection:
         """
     )
     _ensure_column(connection, "waf_audit_tasks", "preprocessing_id", "TEXT")
+    _ensure_column(connection, "waf_audit_tasks", "review_mode", "TEXT NOT NULL DEFAULT 'log_grounded'")
     return connection
 
 
@@ -174,6 +182,7 @@ def _row_to_record(row: sqlite3.Row) -> WafAuditTaskRecord:
     return WafAuditTaskRecord(
         task_id=row["task_id"],
         status=row["status"],
+        review_mode=row["review_mode"] or "log_grounded",
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         report_upload_path=row["report_upload_path"],

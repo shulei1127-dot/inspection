@@ -5,7 +5,8 @@ from app.schemas.unified_json import UnifiedJsonV1
 from app.services.report_payload_mapper import map_unified_json_to_report_payload
 
 
-def test_xray_payload_appendix_contains_template_fields() -> None:
+def test_xray_payload_appendix_contains_template_fields(monkeypatch) -> None:
+    monkeypatch.setenv("ENV_FILE", "/tmp/nonexistent-xray-payload.env")
     unified_json = UnifiedJsonV1.model_validate(
         {
             "schema_version": "unified-json/v1",
@@ -142,6 +143,8 @@ def test_xray_payload_appendix_contains_template_fields() -> None:
     )
     assert payload.appendix["xray_issue_1_problem"] == "引擎节点健康检查告警"
     assert payload.appendix["xray_issue_1_evidence"] == "失败项：REDIS PORT STATUS"
+    assert payload.appendix["xray_llm_inspection_summary"] == payload.appendix["xray_result_conclusion"]
+    assert payload.appendix["xray_llm_exception_summary"] == payload.appendix["xray_key_alerts"]
     assert payload.appendix["xray_issue_2_problem"] == "服务 prometheus 运行失败"
     assert "服务 Monitoring system and time series database 当前状态为 失败" in str(
         payload.appendix["xray_issue_2_evidence"]
@@ -149,7 +152,9 @@ def test_xray_payload_appendix_contains_template_fields() -> None:
     assert payload.appendix["xray_issue_3_problem"] == "Host last boot time is missing"
 
 
-def test_xray_observation_priority_prefers_runtime_failures_over_resource_risk() -> None:
+
+
+def test_xray_observation_priority_prefers_high_resource_alerts_over_runtime_warnings() -> None:
     unified_json = UnifiedJsonV1.model_validate(
         {
             "schema_version": "unified-json/v1",
@@ -215,10 +220,122 @@ def test_xray_observation_priority_prefers_runtime_failures_over_resource_risk()
 
     payload = map_unified_json_to_report_payload(unified_json, report_lang="zh-CN")
 
-    assert payload.appendix["xray_issue_1_problem"] == "容器 xray-redis 已停止"
-    assert "容器 xray-redis 当前状态为 已停止" in str(payload.appendix["xray_issue_1_evidence"])
-    assert payload.appendix["xray_issue_2_problem"] == "管理节点磁盘使用率偏高"
+    assert payload.appendix["xray_issue_1_problem"] == "管理节点磁盘使用率偏高"
+    assert "92.00%" in str(payload.appendix["xray_issue_1_evidence"]) or "92" in str(
+        payload.appendix["xray_issue_1_evidence"]
+    )
+    assert payload.appendix["xray_issue_2_problem"] == "容器 xray-redis 已停止"
+    assert "容器 xray-redis 当前状态为 已停止" in str(payload.appendix["xray_issue_2_evidence"])
     assert payload.appendix["xray_issue_3_problem"] == "-"
+
+
+def test_xray_resource_alert_thresholds_cover_cpu_memory_and_disk() -> None:
+    unified_json = UnifiedJsonV1.model_validate(
+        {
+            "schema_version": "unified-json/v1",
+            "task_id": "tsk_xray_payload_thresholds",
+            "generated_at": "2026-04-24T09:22:57Z",
+            "host_info": {
+                "hostname": "host-thresholds",
+            },
+            "summary": {
+                "overall_status": "warning",
+                "service_count": 0,
+                "service_running_count": 0,
+                "container_count": 0,
+                "container_running_count": 0,
+                "issue_count": 0,
+                "issue_by_severity": {
+                    "critical": 0,
+                    "high": 0,
+                    "medium": 0,
+                    "low": 0,
+                    "info": 0,
+                },
+            },
+            "services": [],
+            "containers": [],
+            "issues": [],
+            "warnings": [],
+            "metadata": {
+                "product_type": "xray",
+                "xray_mgmt_health_result": "正常",
+                "xray_engine_health_result": "正常",
+                "xray_mgmt_cpu": "8 cores / Intel Xeon / 当前使用率 80.0%",
+                "xray_mgmt_memory": "总量 15987M，已用 13600M (85.0%)",
+                "xray_mgmt_disk": "/，89G / 97G，使用率 98%",
+            },
+        }
+    )
+
+    payload = map_unified_json_to_report_payload(unified_json, report_lang="zh-CN")
+
+    assert payload.appendix["xray_primary_problem"] == "管理节点磁盘使用率偏高"
+    assert "管理节点磁盘使用率偏高（98.00%）" in str(payload.appendix["xray_key_alerts"])
+    assert payload.appendix["xray_issue_1_problem"] == "管理节点磁盘使用率偏高"
+    assert payload.appendix["xray_issue_2_problem"] == "管理节点内存使用率偏高"
+    assert payload.appendix["xray_issue_3_problem"] == "管理节点 CPU 使用率偏高"
+
+
+def test_xray_critical_disk_pressure_surfaces_ahead_of_runtime_critical() -> None:
+    unified_json = UnifiedJsonV1.model_validate(
+        {
+            "schema_version": "unified-json/v1",
+            "task_id": "tsk_xray_payload_disk_critical",
+            "generated_at": "2026-04-24T09:22:57Z",
+            "host_info": {
+                "hostname": "host-critical",
+            },
+            "summary": {
+                "overall_status": "warning",
+                "service_count": 0,
+                "service_running_count": 0,
+                "container_count": 1,
+                "container_running_count": 0,
+                "issue_count": 1,
+                "issue_by_severity": {
+                    "critical": 0,
+                    "high": 0,
+                    "medium": 1,
+                    "low": 0,
+                    "info": 0,
+                },
+            },
+            "services": [],
+            "containers": [
+                {
+                    "name": "xray-redis",
+                    "status": "failed",
+                }
+            ],
+            "issues": [
+                {
+                    "id": "container-xray-redis-restarting",
+                    "severity": "medium",
+                    "category": "container",
+                    "related_object_name": "xray-redis",
+                    "title": "Container xray-redis is restarting",
+                    "description": "docker ps shows restarting container",
+                    "suggestion": "检查 redis 容器重启原因。",
+                }
+            ],
+            "warnings": [],
+            "metadata": {
+                "product_type": "xray",
+                "xray_mgmt_health_result": "告警",
+                "xray_mgmt_health_note": "失败项：HEALTH COMMAND ERROR",
+                "xray_engine_health_result": "告警",
+                "xray_engine_health_note": "失败项：REDIS PORT STATUS",
+                "xray_mgmt_disk": "/，89G / 97G，使用率 98%",
+            },
+        }
+    )
+
+    payload = map_unified_json_to_report_payload(unified_json, report_lang="zh-CN")
+
+    assert payload.appendix["xray_issue_1_problem"] == "管理节点健康检查告警"
+    assert payload.appendix["xray_issue_2_problem"] == "引擎节点健康检查告警"
+    assert payload.appendix["xray_issue_3_problem"] == "管理节点磁盘使用率偏高"
 
 
 def test_xray_payload_prefers_collected_at_for_inspection_date() -> None:
@@ -290,8 +407,18 @@ def test_xray_template_exists_and_contains_expected_markers() -> None:
     assert "{d.container_rows[i].cpu_percent}" in document_xml
     assert "{d.container_rows[i].memory_percent}" in document_xml
     assert "{d.container_rows[i+1].name}" in document_xml
-    assert "{d.appendix.xray_key_alerts}" in document_xml
-    assert "{d.appendix.xray_result_conclusion}" in document_xml
-    assert "{d.appendix.xray_issue_1_problem}" in document_xml
-    assert "{d.appendix.xray_issue_1_evidence}" in document_xml
-    assert "{d.appendix.xray_issue_1_recommendation}" in document_xml
+    assert "{d.appendix.xray_key_alerts}" not in document_xml
+    assert "{d.appendix.xray_llm_inspection_summary}" in document_xml
+    assert "异常概览：" not in document_xml
+    assert "重点告警：" not in document_xml
+    assert "关键运行概况：" not in document_xml
+    assert "（按风险优先级排序）" in document_xml
+    assert "{d.appendix.xray_display_issue_1_problem_line}" in document_xml
+    assert "{d.appendix.xray_display_issue_1_evidence_line}" in document_xml
+    assert "{d.appendix.xray_display_issue_1_action_line}" in document_xml
+    assert "{d.appendix.xray_display_issue_2_problem_line}" in document_xml
+    assert "{d.appendix.xray_display_issue_2_evidence_line}" in document_xml
+    assert "{d.appendix.xray_display_issue_2_action_line}" in document_xml
+    assert "{d.appendix.xray_display_issue_3_problem_line}" in document_xml
+    assert "{d.appendix.xray_display_issue_3_evidence_line}" in document_xml
+    assert "{d.appendix.xray_display_issue_3_action_line}" in document_xml

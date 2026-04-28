@@ -7,6 +7,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, is_zipfile
 
 from app.schemas.audit_result import AuditResultV1
 from app.schemas.log_evidence import LogEvidenceV1
+from app.schemas.waf_document_review import WafDocumentReviewResultV1
 from app.services.audit_opinion_renderer import (
     build_audit_opinion_sections,
     build_container_audit_rows,
@@ -195,6 +196,48 @@ def augment_report_with_audit_appendix(
             continue
         for row in rows:
             _append_paragraph(body, row)
+
+    files["word/document.xml"] = ET.tostring(document_root, encoding="utf-8", xml_declaration=True)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_docx_files(output_path, files)
+    return output_path
+
+
+def augment_report_with_document_review_appendix(
+    base_report_path: Path,
+    *,
+    review_result: WafDocumentReviewResultV1,
+    output_path: Path,
+) -> Path:
+    if not base_report_path.exists():
+        raise ReportAugmentError("Base report docx does not exist.")
+    if base_report_path.suffix.lower() != ".docx" or not is_zipfile(base_report_path):
+        raise ReportAugmentError("Base report is not a valid .docx document.")
+    try:
+        files = _read_docx_files(base_report_path)
+    except Exception as exc:  # pragma: no cover - corruption guard
+        raise ReportAugmentError("Failed to read the base docx report.") from exc
+
+    if "word/document.xml" not in files:
+        raise ReportAugmentError("Base docx does not contain word/document.xml.")
+
+    document_root = ET.fromstring(files["word/document.xml"])
+    body = document_root.find("w:body", NS)
+    if body is None:
+        raise ReportAugmentError("Base docx does not contain word/document.xml body.")
+
+    _append_paragraph(body, "附录：文档直审意见")
+    _append_paragraph(body, review_result.disclaimer)
+    _append_paragraph(body, "异常情况及处置操作")
+    if review_result.exception_actions:
+        for index, action in enumerate(review_result.exception_actions, start=1):
+            _append_paragraph(body, f"问题 {index}：{action.problem}")
+            _append_paragraph(body, f"证据：{action.evidence}")
+            _append_paragraph(body, f"建议：{action.action}")
+    else:
+        _append_paragraph(body, "当前文档未识别到明确异常项，建议结合运行日志和现场状态进一步核查。")
+    _append_paragraph(body, "巡检总结")
+    _append_paragraph(body, review_result.inspection_summary)
 
     files["word/document.xml"] = ET.tostring(document_root, encoding="utf-8", xml_declaration=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)

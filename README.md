@@ -131,6 +131,29 @@ results, and the generated markdown audit opinion. The old direct `log_file`
 upload path is kept as a compatibility API path, but the browser flow no longer
 asks users to upload the full WAF log archive twice.
 
+The WAF path now also supports a document-only review mode for cases where the
+manual inspection DOCX exists but the original full-log package is not
+available:
+
+- `POST /api/waf-audits/document-only`
+- `GET /api/waf-audits/{task_id}/document-review-input`
+- `GET /api/waf-audits/{task_id}/document-review`
+
+In this mode the platform:
+
+- parses the DOCX into normalized claims
+- extracts actionable abnormal topics from the document itself
+- optionally grounds LLM advice against local help-doc snippets under
+  `docs/help_docs/waf/`
+- generates `异常情况及处置操作` and `巡检总结`
+- appends a clearly labeled `文档直审意见` appendix to a new DOCX
+
+Document-only mode is intentionally conservative:
+
+- it may say `根据巡检文档内容`
+- it must not claim `经日志核验`
+- when evidence is weak it falls back to `需进一步核查`
+
 Minimal local persistence now uses SQLite through Python's standard library:
 
 ```bash
@@ -138,6 +161,25 @@ TASKS_DB_PATH=tasks.sqlite3
 ```
 
 If unset, task records are stored in `./tasks.sqlite3`.
+
+The platform now also reads a local `.env` file automatically. Priority is:
+
+- shell `export` / process env
+- `.env`
+- built-in defaults
+
+So for day-to-day development you can usually just copy:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` and start the service normally. If you need a different file,
+you can override it with:
+
+```bash
+ENV_FILE=/path/to/custom.env uvicorn app.main:app --host 0.0.0.0 --port 8011 --reload
+```
 
 The upload flow now resolves log parsing through an internal analyzer abstraction:
 
@@ -206,6 +248,38 @@ inspection template. Fields that are not yet produced by the current logs stay
 blank or `-`, while the currently parsed xray host/service/container/issue data
 is rendered into that template through existing `report_payload.json` +
 Carbone flow.
+
+The xray path can now also enable an optional LLM summary-section layer without
+changing the fact payload. In this mode:
+
+- analyzer facts still populate versions, IPs, health checks, resource values,
+  service rows, container rows, and evidence text
+- the LLM only generates:
+  - exception summary
+  - exception/action items for the top issue slots
+  - final inspection summary
+- malformed or failed model responses fall back to the current rule-based text
+  and do not block DOCX rendering
+
+Recommended optional env vars for this xray-only section generation path:
+
+```bash
+XRAY_LLM_SECTION_ENABLED=false
+XRAY_LLM_SECTION_MODE=disabled
+XRAY_LLM_SECTION_BASE_URL=
+XRAY_LLM_SECTION_API_KEY=
+XRAY_LLM_SECTION_MODEL=
+XRAY_LLM_SECTION_TIMEOUT_SECONDS=30
+XRAY_LLM_SECTION_TEMPERATURE=0.2
+WAF_LLM_REVIEW_ENABLED=false
+WAF_LLM_REVIEW_MODE=disabled
+WAF_LLM_REVIEW_BASE_URL=
+WAF_LLM_REVIEW_API_KEY=
+WAF_LLM_REVIEW_MODEL=
+WAF_LLM_REVIEW_TIMEOUT_SECONDS=30
+WAF_LLM_REVIEW_TEMPERATURE=0.2
+WAF_HELP_DOCS_DIR=docs/help_docs/waf
+```
 
 See:
 

@@ -65,10 +65,18 @@ ISSUE_SEVERITY_PRIORITY = {
 
 XRAY_PRIORITY_RULES = {
     "health_alert": 400,
+    "resource_critical": 350,
     "runtime_critical": 300,
     "runtime_warning": 200,
     "resource_risk": 100,
+    "resource_alert": 250,
     "other": 0,
+}
+
+XRAY_RESOURCE_ALERT_THRESHOLDS = {
+    "cpu": 80.0,
+    "memory": 85.0,
+    "disk": 85.0,
 }
 
 
@@ -455,6 +463,9 @@ def _build_xray_appendix(
         ),
         "xray_deployment_mode": xray_deployment_mode,
         "xray_result_conclusion": result_conclusion,
+        "xray_llm_inspection_summary": result_conclusion,
+        "xray_llm_exception_summary": key_alerts,
+        "xray_llm_disposal_advice": "；".join(recommendations[:3]) if recommendations else "-",
         "xray_primary_problem": primary_problem,
         "xray_key_alerts": key_alerts,
         "xray_key_runtime_overview": runtime_overview,
@@ -667,10 +678,36 @@ def _build_xray_observations(
             _metadata_text(metadata, "xray_engine_health_note"),
             "优先核查 ./minion engine health 返回的失败项，并恢复对应引擎节点组件。",
         ),
-        _build_xray_resource_observation("管理节点磁盘使用率偏高", _metadata_text(metadata, "xray_mgmt_disk")),
-        _build_xray_resource_observation("引擎节点磁盘使用率偏高", _metadata_text(metadata, "xray_engine_disk")),
-        _build_xray_resource_observation("管理节点内存使用率偏高", _metadata_text(metadata, "xray_mgmt_memory")),
-        _build_xray_resource_observation("引擎节点内存使用率偏高", _metadata_text(metadata, "xray_engine_memory")),
+        _build_xray_resource_observation(
+            "管理节点 CPU 使用率偏高",
+            _metadata_text(metadata, "xray_mgmt_cpu"),
+            metric="cpu",
+        ),
+        _build_xray_resource_observation(
+            "引擎节点 CPU 使用率偏高",
+            _metadata_text(metadata, "xray_engine_cpu"),
+            metric="cpu",
+        ),
+        _build_xray_resource_observation(
+            "管理节点内存使用率偏高",
+            _metadata_text(metadata, "xray_mgmt_memory"),
+            metric="memory",
+        ),
+        _build_xray_resource_observation(
+            "引擎节点内存使用率偏高",
+            _metadata_text(metadata, "xray_engine_memory"),
+            metric="memory",
+        ),
+        _build_xray_resource_observation(
+            "管理节点磁盘使用率偏高",
+            _metadata_text(metadata, "xray_mgmt_disk"),
+            metric="disk",
+        ),
+        _build_xray_resource_observation(
+            "引擎节点磁盘使用率偏高",
+            _metadata_text(metadata, "xray_engine_disk"),
+            metric="disk",
+        ),
     ]:
         if observation is not None:
             observations.append(observation)
@@ -707,21 +744,32 @@ def _build_xray_health_observation(
 def _build_xray_resource_observation(
     title: str,
     raw_value: str,
+    *,
+    metric: str,
 ) -> XrayObservation | None:
     if raw_value == "-":
         return None
 
     usage = _extract_percent(raw_value)
-    if usage is None or usage < 85:
+    threshold = XRAY_RESOURCE_ALERT_THRESHOLDS.get(metric)
+    if usage is None or threshold is None or usage < threshold:
         return None
 
     return XrayObservation(
         title=title,
         evidence=f"日志摘要显示：{raw_value}",
         recommendation="结合节点资源趋势和业务负载，尽快评估清理、扩容或限流措施。",
-        priority=XRAY_PRIORITY_RULES["resource_risk"],
+        priority=_build_xray_resource_priority(metric=metric, usage=usage),
         summary=f"{title}（{usage:.2f}%）",
     )
+
+
+def _build_xray_resource_priority(*, metric: str, usage: float) -> int:
+    if metric == "disk" and usage >= 95:
+        return XRAY_PRIORITY_RULES["resource_critical"]
+    if metric in {"cpu", "memory"} and usage >= 95:
+        return XRAY_PRIORITY_RULES["resource_critical"]
+    return XRAY_PRIORITY_RULES["resource_alert"]
 
 
 def _build_xray_issue_priority(issue_row: IssueRow) -> int:
