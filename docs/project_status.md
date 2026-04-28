@@ -258,6 +258,20 @@ Log Analyzer Abstraction v1 MVP
   - display task id, status, claim / confirmed count, and conflict count
   - expose task metadata, normalized claims, structured audit result, and markdown audit opinion links
 - updated the WAF audit API/frontend so the default browser flow reuses `/waf` preprocessing results instead of asking users to upload the full WAF log archive a second time; the old direct `log_file` API path remains compatible for now
+- added one standard local bootstrap/start/stop/verify script set:
+  - `scripts/bootstrap_local_env.sh`
+  - `scripts/start_local_stack.sh`
+  - `scripts/stop_local_stack.sh`
+  - `scripts/verify_local_stack.sh`
+- kept the standard local stack intentionally narrow to platform + analyzer + Carbone, while leaving Mermaid and LLM integrations optional
+- added a first repository-local Agent Skills style split-skill layout:
+  - `skills/inspection-report-platform-operator/`
+  - `skills/xray-report-generator/`
+  - `skills/waf-report-reviewer/`
+- kept the skill split responsibility-based:
+  - operator for runtime bootstrap/health/troubleshooting
+  - xray for xray report generation flow
+  - waf for WAF preprocessing/audit/document-only review flow
 - added WAF `document_only` review round1 so a manual inspection DOCX can now be reviewed without full-log preprocessing through `POST /api/waf-audits/document-only`
 - added document-only WAF review artifacts:
   - `document_review_input.json`

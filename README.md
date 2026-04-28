@@ -181,6 +181,63 @@ you can override it with:
 ENV_FILE=/path/to/custom.env uvicorn app.main:app --host 0.0.0.0 --port 8011 --reload
 ```
 
+## Standard Local Stack Scripts
+
+The repository now includes one standard local bootstrap/start/stop/verify path
+so another engineer or AI agent does not need to remember the startup order by
+hand:
+
+```bash
+./scripts/bootstrap_local_env.sh
+./scripts/start_local_stack.sh
+./scripts/verify_local_stack.sh
+```
+
+This standard stack covers:
+
+- platform FastAPI app
+- standalone `log-analyzer-service`
+- Carbone runtime
+
+To stop the managed local services later:
+
+```bash
+./scripts/stop_local_stack.sh
+```
+
+The scripts follow the repository `.env` when present and keep LLM optional:
+
+- without LLM keys, xray/WAF base flows still work
+- with matching LLM env vars configured, xray/WAF summary enhancement can be enabled after a service restart
+
+## Repository-Local Skill
+
+The repository now includes a first Agent Skills style split-skill layout:
+
+```text
+skills/inspection-report-platform-operator/
+skills/xray-report-generator/
+skills/waf-report-reviewer/
+```
+
+Recommended responsibilities:
+
+- `inspection-report-platform-operator`
+  - bootstrap the repo
+  - start / stop / verify the local stack
+  - troubleshoot runtime health
+- `xray-report-generator`
+  - operate the xray archive -> report flow
+  - inspect xray task artifacts and rendered DOCX output
+- `waf-report-reviewer`
+  - operate WAF preprocessing
+  - run log-grounded WAF audits
+  - run WAF document-only review
+
+These skills point AI agents at the standard scripts above instead of making
+them reconstruct the full startup sequence or the business-flow entry points
+from scratch.
+
 The upload flow now resolves log parsing through an internal analyzer abstraction:
 
 ```bash

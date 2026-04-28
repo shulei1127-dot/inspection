@@ -1,0 +1,3 @@
+display_name: WAF Report Reviewer
+short_description: Run WAF preprocessing, audit, and document-only review workflows in the inspection-report-platform repository.
+default_prompt: Help me use this repository to preprocess WAF logs, audit a WAF report, or review a WAF report in document-only mode.

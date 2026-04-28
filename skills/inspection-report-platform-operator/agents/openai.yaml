@@ -1,0 +1,3 @@
+display_name: Inspection Report Platform Operator
+short_description: Bootstrap, verify, and troubleshoot the local inspection-report-platform runtime.
+default_prompt: Help me bootstrap, start, stop, verify, or troubleshoot the inspection-report-platform runtime before using xray or WAF workflows.

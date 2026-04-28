@@ -1,0 +1,3 @@
+display_name: Xray Report Generator
+short_description: Run the xray log archive to DOCX report workflow in the inspection-report-platform repository.
+default_prompt: Help me use this repository to turn an xray log archive into a rendered inspection DOCX report.
